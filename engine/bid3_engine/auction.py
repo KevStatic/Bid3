@@ -33,6 +33,22 @@ Phase = Literal["DRAFT", "LOBBY", "OPEN", "COUNTDOWN", "PAUSED", "SOLD_LOCKED", 
 PaddleStatus = Literal["OUT", "JOIN_PENDING", "ACTIVE", "LEAVE_PENDING", "UNKNOWN"]
 AckResult = Literal["ACCEPTED", "STALE", "IGNORED", "CLOSED"]
 
+def canonical_transcript(bids: list[dict[str, Any]]) -> str:
+    """The accepted bids, oldest first, as compact JSON with sorted keys (non-ASCII escaped).
+    Must match web/src/lib/transcript-digest.ts; tests/test_vectors.py checks it."""
+    ordered = sorted(bids, key=lambda b: b["bidIndex"])
+    return json.dumps(
+        [{"bidIndex": b["bidIndex"], "bidderAlias": b["bidderAlias"], "priceMinor": b["priceMinor"], "serverSeq": b["serverSeq"]} for b in ordered],
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
+
+def transcript_digest(bids: list[dict[str, Any]]) -> str:
+    """sha256 of canonical_transcript. Anyone holding the AuctionBid entities can recompute it."""
+    return "0x" + hashlib.sha256(canonical_transcript(bids).encode("utf-8")).hexdigest()
+
+
 CLOSED_PHASES = ("SOLD_LOCKED", "UNSOLD", "CANCELLED")
 BIDDING_PHASES = ("OPEN", "COUNTDOWN")
 
@@ -515,15 +531,7 @@ class Auction:
         )
 
     def transcript_digest(self) -> str:
-        """sha256 over the accepted bids, oldest first, as compact JSON with sorted keys.
-        Anyone holding the AuctionBid entities can recompute it."""
-        bids = sorted(self.bids, key=lambda b: b["bidIndex"])
-        canonical = json.dumps(
-            [{"bidIndex": b["bidIndex"], "bidderAlias": b["bidderAlias"], "priceMinor": b["priceMinor"], "serverSeq": b["serverSeq"]} for b in bids],
-            separators=(",", ":"),
-            sort_keys=True,
-        )
-        return "0x" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        return transcript_digest(self.bids)
 
     def snapshot_record(self, now_ms: int) -> tuple[str, str, dict[str, Any]]:
         return (

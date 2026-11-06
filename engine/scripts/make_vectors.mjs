@@ -7,6 +7,7 @@
 import { writeFileSync } from "node:fs";
 import { priceAtBid } from "../../web/src/lib/pricing.ts";
 import { canonicalRules, rulesHash } from "../../web/src/lib/rules-hash.ts";
+import { canonicalTranscript, transcriptDigest } from "../../web/src/lib/transcript-digest.ts";
 
 const ladders = [
   { startPriceMinor: 10_000, stepBps: 500, ceilingMinor: 100_000 },
@@ -31,5 +32,25 @@ for (const rules of ruleSets) {
   hashes.push({ rules, canonical: canonicalRules(rules), hash: await rulesHash(rules) });
 }
 
-writeFileSync(new URL("../tests/vectors.json", import.meta.url), JSON.stringify({ pricing, hashes }, null, 2) + "\n");
-console.log(`wrote ${pricing.length} ladders and ${hashes.length} rule hashes`);
+// Bids are listed out of order on purpose: both sides must sort by bidIndex before hashing.
+const transcriptCases = [
+  [],
+  [
+    { bidIndex: 1, bidderAlias: "M4", priceMinor: 10_500, serverSeq: 2 },
+    { bidIndex: 0, bidderAlias: "K7", priceMinor: 10_000, serverSeq: 1 },
+    { bidIndex: 2, bidderAlias: "K7", priceMinor: 11_025, serverSeq: 3 },
+  ],
+  [
+    { bidIndex: 0, bidderAlias: "ü✓", priceMinor: 1, serverSeq: 7 },
+    { bidIndex: 1, bidderAlias: "🔨\u007f", priceMinor: 2, serverSeq: 9 },
+    { bidIndex: 2, bidderAlias: 'a"b\\c\n', priceMinor: 2, serverSeq: 12 },
+  ],
+];
+
+const transcripts = [];
+for (const bids of transcriptCases) {
+  transcripts.push({ bids, canonical: canonicalTranscript(bids), digest: await transcriptDigest(bids) });
+}
+
+writeFileSync(new URL("../tests/vectors.json", import.meta.url), JSON.stringify({ pricing, hashes, transcripts }, null, 2) + "\n");
+console.log(`wrote ${pricing.length} ladders, ${hashes.length} rule hashes and ${transcripts.length} transcripts`);
