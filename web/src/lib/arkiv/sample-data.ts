@@ -1,6 +1,7 @@
 import { config } from "../config";
 import { priceAtBid } from "../pricing";
 import { rulesHash } from "../rules-hash";
+import { transcriptDigest } from "../transcript-digest";
 import type { BidRecord, Definition, Listing, Result, Snapshot } from "./types";
 
 /**
@@ -217,7 +218,8 @@ export async function buildSampleSet(nowMs: number = Date.now()): Promise<Sample
         finalSeq: 0,
         bidCount: 0,
         rulesHash: hash,
-        transcriptDigest: fakeKey(`transcript:${auctionId}`),
+        // Real digests, computed exactly as the engine does, so the sample explorer's checks are honest.
+        transcriptDigest: await transcriptDigest([]),
       });
       continue;
     }
@@ -254,7 +256,7 @@ export async function buildSampleSet(nowMs: number = Date.now()): Promise<Sample
       finalSeq: 3 + (count - 1) * 2 + 1,
       bidCount: count,
       rulesHash: hash,
-      transcriptDigest: fakeKey(`transcript:${auctionId}`),
+      transcriptDigest: await transcriptDigest(bids.filter((b) => b.auctionId === auctionId)),
     });
   }
 

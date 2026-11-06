@@ -21,7 +21,7 @@ A live auction run with physical paddle tags, built for **ETHGlobal Mumbai (Nov 
 |---|---|---|
 | Name | **Bid3** (was HoldBid) | everywhere |
 | Sponsor | **Arkiv only** (one Arkiv track prize + optional Swarm bonus) | `arkiv/` |
-| Track | Confirmed by the team on Fri 6 Nov. _Record which one here:_ ____ | |
+| Track | **Build on Arkiv (from scratch)** (Kev, Fri 6 Nov ~19:30). Requires ETHGlobal's Classic rules: no pre-existing project-specific code; see the changelog entry "track and rules" | `README.md`, `arkiv/` |
 | Button | **Press = bid at the next step** (not a jump bid on a running clock) | engine `auction.py` |
 | Leader switches OFF | **Bid stays binding**; they can still win | engine `auction.py` |
 | Step | **+5% per bid** (500 bps), configurable per auction | rules |
@@ -33,7 +33,7 @@ A live auction run with physical paddle tags, built for **ETHGlobal Mumbai (Nov 
 | Firmware | Arduino C++ for the tags and gateway, on branch **`firmware`** (not on `main`) | `origin/firmware` |
 | Commits | **Only Kev commits.** AI assistants write files but never run `git commit` or `git push` | — |
 
-Event timing: submission deadline is **Sat 7 Nov 2026, 09:00 IST** (per Kev, Fri 6 Nov 17:00; earlier notes said Sun 8 Nov, so confirm on the ETHGlobal dashboard). The plan targets submitting by 07:00. Hardware cut-off: if the real-hardware round isn't working by 01:00, demo with the keyboard bridge (labelled) and show the hardware separately.
+Event timing: submission deadline is **Sat 7 Nov 2026, 09:00 IST**, confirmed on ETHGlobal's Mumbai rules page. Late submissions are not accepted. The plan targets submitting by 07:00. Hardware cut-off: if the real-hardware round isn't working by 01:00, demo with the keyboard bridge (labelled) and show the hardware separately.
 
 ## 3. Repo layout
 
@@ -63,6 +63,7 @@ Planning documents (outside the repo): `/Users/kev/Hackathons/EthGlobal/Plans/`.
 | Live stream messages (`snapshot`, `state`, `bid`) and `AuctionState` | `web/src/lib/types.ts` | `engine/bid3_engine/auction.py` (`state()`) |
 | Exact pricing `price(n) = min(ceiling, round_half_up(start × (10000+bps)^n / 10000^n))` | `web/src/lib/pricing.ts` | `engine/bid3_engine/pricing.py` |
 | Rules hash (sha256 of canonical JSON, fixed key order) | `web/src/lib/rules-hash.ts` | `engine/bid3_engine/rules_hash.py` |
+| Transcript digest (sha256 of bids sorted by `bidIndex`, sorted keys, non-ASCII escaped like Python's `json.dumps`) | `web/src/lib/transcript-digest.ts` | `engine/bid3_engine/auction.py` (`transcript_digest`) |
 | Arkiv entity schemas (5 types) | `web/src/lib/arkiv/schemas.ts` | `arkiv-worker/src/schemas.ts` (identical copy) |
 | Serial protocol (115200; AUCTION_EVENT/STATE/ACK_JSON, session-correlated ACKs, AUCTION_STATUS/BRIDGE_JSON, CMD=STATUS) | `bridge/README.md` | gateway firmware |
 | Outbox (`GET /outbox`, `POST /outbox/{id}/published`) | `engine/bid3_engine/api.py` | `arkiv-worker/src/index.ts` |
@@ -116,7 +117,10 @@ With no env, the web app runs a labelled in-browser simulation and bundled sampl
    - `reach.md`, `why-arkiv.md`, `how-you-use-arkiv.md`.
    - Writer wallet addresses and a runnable query in the README.
 6. **Web placeholders:** the seller's "Open the round" and listing IDs need wiring to the engine's `POST /auctions` and `/open`; the seller sign-in is not built yet.
-7. **Submission:** root README must separate pre-existing work (hardware, tag/gateway firmware) from Mumbai work, include measured latency, and say how AI was used. Demo video, 3 minutes or less.
+7. **Submission:**
+   - Root README states that all code, firmware included, was written at Mumbai (Kev, Fri 6 Nov), and lists what was reused: public libraries, the Adafruit 5×7 font, off-the-shelf ESP32 boards.
+   - It must also include measured latency and say how AI was used.
+   - Demo video, 3 minutes or less, with no AI voiceover.
 
 ## 7. Rules for assistants
 
@@ -131,6 +135,11 @@ With no env, the web app runs a labelled in-browser simulation and bundled sampl
 
 ## Changelog
 
+### 2026-11-07: prepare final V6 reconnect pull request
+- Integrated current main into firmware to resolve the shared project-log conflict before creating the requested PR. Preserved both sets of log entries and all current main runtime/Arkiv/transcript work.
+- The final V6 reconnect ZIP remains the firmware source of truth: all gateway, tag and shared source bytes are unchanged by integration. The later local verification-timing variant remains excluded.
+- Rechecked the merged engine suite, firmware/bridge host checks and Arkiv schema agreement; GitHub checks validate the integration commit. This prepares the PR only; no merge into main, cloud deployment or device flash is performed.
+
 ### 2026-11-07: publish the user's final V6 reconnect archive
 - The user explicitly requested uploading only Downloads/JOB/Bid3_Firmware_V6_ReconnectFix_2026-11-06.zip to origin/firmware, authorizing this commit/push over the usual Kev-only convention. Archive SHA-256: 4e1fc3857d6c9bfe2a1493ca6ffcaa0968ee7baa1f33db830a73ebd12cfce727.
 - Imported the supplied V6_RECONNECT_FEEDBACK_FIX gateway, Tag01, Tag02, canonical shared headers, regression and documentation. Every board/shared source is byte-identical to the archive. The separate local verification-timing experiment is not included.
@@ -141,6 +150,95 @@ With no env, the web app runs a labelled in-browser simulation and bundled sampl
 - Merged main's deploy/demo hardening into firmware before creating the requested pull request. Preserved the latest port 8010 defaults, token enforcement/redaction, new-lot broadcast fix, seller/Arkiv work and all project-log entries.
 - Resolved append-only conflicts in PROJECT_LOG.md and engine/tests/test_api.py by retaining both V6 fault-isolation regressions and main's new-auction notification tests. Firmware source/keys/wiring are unchanged.
 - Rechecked firmware integrity/host regressions, all 44 combined engine tests and Arkiv schema drift before publishing the merge. The user's explicit pull-request request authorizes this integration commit/push; no PR merge, cloud deployment or device flash is performed.
+### 2026-11-06 ~21:15 IST: go-live preparation
+- **Don't start the worker against the engine running since 12:50.**
+  - It runs old code: no V6 rule, no token or transcript changes.
+  - Its only lot, `bid3-room-01`, is UNSOLD with `listingId: "REPLACE_WITH_LISTING_ENTITY_KEY"` (from `firmware/integration/auction-template.json`).
+  - Its outbox holds 3 records, which would be published permanently under the publisher wallet.
+  - Restart on merged `main` with a fresh `DATABASE_PATH`, `SEED_DEMO=0` and `INTENT_SIGNATURES_REQUIRED=1`.
+- **Live lot:** create it from the firmware template (enrolled paddle public keys, 10 s countdown), overriding the IDs to match the `seed-listings` lot (`auctionId: bid3-003`, `listingId: lot-003`). Use `jq`; the template file is left unchanged.
+- **New `bridge/tools/latency.py`:** reads `BID3_LATENCY_JSON` lines (the paddle's own button-to-engine-ack timing) from a paddle's USB serial or a saved log, and prints n, median, p90, min, max and counts by result code. Tested on a sample log.
+- **`arkiv-worker/src/index.ts`:** bid write log lines now add "N ms after the engine accepted it". This gives `why-arkiv.md` its number. Worker typecheck passes.
+
+### 2026-11-06 ~21:00 IST: README after the firmware merge
+- `firmware` is merged into `main` (PR #1, then `dce4254`). The merge kept `main`'s root README, which dropped the firmware branch's README sections.
+- **Restored in `README.md`:**
+  - a "Hardware and firmware" section: boards, V6, links to `firmware/START_HERE.md`, `README.md`, `INTEGRATION_BRIEF.md`, `BIDDING_RULES.md` and `VALIDATION.md`
+  - the pinned toolchain and the reminder to deploy the engine from this repo
+  - the verification commands and the CI link
+  - the Architecture table now points at `firmware/` instead of the branch
+- **"How a round works"** now states the V6 rule: one lost paddle is blocked while the others and the countdown continue; gateway, bridge or engine loss pauses the room. Section 1 of this log already said this. No file under `firmware/` was changed.
+- **Merged `main` checked:**
+  - engine `pytest` 45 passed
+  - bridge tests 2 passed (they need `pyserial`, so run them with `bridge/requirements.txt` installed)
+  - `check-schemas` passes; vectors regenerate unchanged; web `tsc` clean
+  - all 40 relative links in the README and `arkiv/*.md` resolve
+
+### 2026-11-06 ~20:00 IST: firmware confirmed as built at Mumbai
+- **Kev confirmed:** none of the paddle/gateway firmware existed before the event. Earlier wording here called it "pre-existing"; that was wrong. Section 6, item 7 is corrected.
+- **README** "What we built at Mumbai, and what we reused" now says all code was written at Mumbai and lists only public reuse. Taken from the `firmware` branch:
+  - Arduino and the Espressif ESP32 core: BLE, mbedTLS, FreeRTOS, Wire, Preferences.
+  - The Adafruit GFX classic 5×7 font, BSD licence.
+  - Seeed XIAO ESP32-C3 paddles and an ESP32-WROOM gateway.
+- **Still to confirm with the firmware author:** some firmware wording reads like older work.
+  - `Tag01/BagTrailTag.h`: "original identity/NVS and legacy proof v1 retained".
+  - `LEGACY_TAG_PROTOCOL.md`: "BagTrail … protocol v1".
+  - `firmware/README.md`: "reuses the original owner-tested BLE advertisement format".
+  - If this is BagTrail code written here before the pivot, add the one-line explanation drafted in the README's TODO box. Otherwise the README must disclose it.
+
+### 2026-11-06 ~19:45 IST: track and rules
+- **Track:** Build on Arkiv (from scratch). README, `why-arkiv.md` and `reach.md` no longer carry the existing-projects wording.
+- **Sources:** ETHGlobal's rules, read from `ethglobal.com/events/mumbai/info/details`, `/info/start` and `/rules`.
+- **Deadline:** Sat 7 Nov 09:00 IST, no late submissions.
+- **Prior work:** "Any prior project-specific code, designs, or assets are not allowed unless they're from public libraries or starter kits." Projects built before the event "won't qualify for partner prizes". Undisclosed prior work can mean disqualification and a ban.
+  - **Firmware is the risk.** Section 6 of this log called the tag/gateway firmware "pre-existing work". If any firmware predates the event, disclose it in the README and in writing to ETHGlobal, and ask whether the Arkiv prize still applies.
+  - The README's "What we built at Mumbai, and what we reused" section now says this, with TODOs for the facts.
+- **Commit history:** "single commits of large files without proper history" are "default assumed to be unqualified unless proven otherwise". Our first commits are large: web 11,955 lines (09:02), backend 4,635 (09:53), firmware 4,953 (10:42).
+  - Evidence that they were built at the event: the timestamped entries in this log, and the AI chat transcripts.
+  - From now on, commit in small steps. Don't rewrite history.
+- **AI:** allowed to assist, "not to create the entire project". Document where and how it was used. Spec-driven work must "include all spec files, prompts, and planning artifacts".
+  - The planning docs named in section 3 (`EthGlobal/Plans/…`) are missing: the folder is empty on this machine. Add them to the repo.
+- **Demo video:** no AI voiceover or text-to-speech.
+
+### 2026-11-06 ~19:00 IST: Arkiv write-ups, root README and a judge-runnable query (drafts)
+- **Requirements**, from https://ethglobal.com/events/mumbai/prizes/arkiv. Build tracks, 25% each:
+  - `arkiv/friction.md` (feedback)
+  - `reach.md` (who it's for, can they try it, after Mumbai)
+  - `why-arkiv.md` (what users lose with Postgres; what's kept off Arkiv)
+  - `how-you-use-arkiv.md` (filters, owners and expiry fit the app; each feature changes something users see)
+  - The README must list the writer wallet address(es) and "one query we can run", have an open-source license (MIT ✓), and say how AI was used.
+  - **Not counted:** "the SDK installed but never used to read, or Arkiv used only as a log that nothing reads."
+- **Track (decision for Kev):**
+  - "From scratch" requires the project to be built at Mumbai; the page doesn't say whether pre-existing hardware or firmware is allowed.
+  - "Existing projects" requires the Continuity batch, and the README must separate prior work.
+  - The drafts use the from-scratch questions and note the existing-project wording.
+- **New files:**
+  - `arkiv/friction.md`: 5 real issues with expected, actual, repro and workaround, plus what worked. Ownership not implied by schema tags; `$createdAt` not sortable; no idempotent create (`predictEntityKeys` depends on the nonce); `readonly` entities are still deletable by the owner; explorer link format undocumented.
+  - `arkiv/why-arkiv.md`, `arkiv/how-you-use-arkiv.md`, `arkiv/reach.md`.
+  - `README.md` rewritten.
+  - `arkiv-worker/src/query-results.ts` plus `npm run query-results -- <publisher>`: the judges' query (results `ownedBy` publisher, newest first, no key needed).
+- **Corrected while checking:** the worker comment that keys "can't be fixed in advance". They can be predicted, but only for the current nonce.
+- **Checked:**
+  - Worker `npm ci`, `typecheck` and `check-schemas` pass.
+  - `query-results` runs against the live Rabdi testnet (0 results so far, as expected) and rejects a bad address.
+  - All 32 relative links in the README and `arkiv/*.md` resolve.
+  - SDK facts quoted in the docs come from the installed SDK's type docs.
+- **Open: 23 TODO (Kev) markers.** Wallet addresses, live URL, video, track, evidence and numbers in `reach.md`, plans after Mumbai, the before/at-Mumbai split, measured latency, the AI statement, the explorer URL, the extend button (build or cut), and friction entries from going live. `arkiv/schema.md` still has its own "fill in wallet addresses" line.
+
+### 2026-11-06 ~18:00 IST: results page re-checks every bid and the transcript
+- **Two new browser checks** in `web/src/lib/use-verification.ts`, shown in `explorer-view.tsx` with sidebar explanations:
+  - **Every bid on the ladder:** reprices each `AuctionBid` with `priceAtBid` from the published rules. It fails on a wrong price, a gap in `bidIndex`, or a paddle outbidding itself.
+  - **Transcript matches:** recomputes `transcriptDigest` from the bid entities and compares it to the one in `AuctionResult`.
+- **Bug fix:** a CANCELLED result with bids used to fail "history" as if bids were forbidden. It now compares the bids with the result's `bidCount`. Bids are also filtered to the result's `epoch`.
+- **New contract** (section 4): `web/src/lib/transcript-digest.ts` ↔ `engine/bid3_engine/auction.py`.
+  - The engine's digest is now a module-level `transcript_digest(bids)`. The method calls it, so behaviour is unchanged.
+  - `make_vectors.mjs` now also emits 3 transcript vectors (empty; out-of-order bids; non-ASCII, emoji, DEL, quotes and newline). `test_vectors.py` checks them. Existing pricing and hash vectors are byte-identical.
+- **Sample data** now carries real transcript digests (it used fake ones), so the sample explorer's checks are honest.
+- **Checked:**
+  - Engine `pytest`: 40 passed.
+  - Web `tsc` and `eslint` clean; `next build` passes (built in a scratch clone so Kev's `next dev` wasn't touched).
+  - In the browser (sample mode): 3 results pass all 5 checks; the impostor result fails only "issuer", as intended.
+- **Not checked:** a failing ladder or transcript case in the browser (only the passing paths were seen); live Arkiv data (worker not live yet).
 
 ### 2026-11-06 17:00 IST: deadline moved up
 - Section 2 "Event timing" now says **Sat 7 Nov 09:00 IST** (Kev), with a 01:00 hardware cut-off. Every chat should plan against Saturday.

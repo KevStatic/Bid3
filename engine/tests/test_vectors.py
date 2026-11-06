@@ -4,6 +4,7 @@
 import json
 from pathlib import Path
 
+from bid3_engine.auction import canonical_transcript, transcript_digest
 from bid3_engine.pricing import price_at_bid
 from bid3_engine.rules_hash import canonical_rules, rules_hash
 
@@ -21,6 +22,14 @@ def test_rules_hash_matches_typescript():
     for case in VECTORS["hashes"]:
         assert canonical_rules(case["rules"]) == case["canonical"]
         assert rules_hash(case["rules"]) == case["hash"]
+
+
+def test_transcript_digest_matches_typescript():
+    # The results explorer recomputes this in the browser from the AuctionBid entities.
+    assert len(VECTORS["transcripts"]) >= 3
+    for case in VECTORS["transcripts"]:
+        assert canonical_transcript(case["bids"]) == case["canonical"]
+        assert transcript_digest(case["bids"]) == case["digest"]
 
 
 def test_plan_examples():

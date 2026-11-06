@@ -60,6 +60,18 @@ export function ExplorerView() {
                 <dt className="font-semibold">Bids add up</dt>
                 <dd className="mt-0.5 text-ink-2">The bid entities match the result&apos;s count, final price and winning paddle.</dd>
               </div>
+              <div>
+                <dt className="font-semibold">Every bid on the ladder</dt>
+                <dd className="mt-0.5 text-ink-2">
+                  Your browser reprices every bid from the frozen rules. A bid at the wrong price, a missing bid or a paddle outbidding itself fails.
+                </dd>
+              </div>
+              <div>
+                <dt className="font-semibold">Transcript matches</dt>
+                <dd className="mt-0.5 text-ink-2">
+                  The result is sealed with a hash of every bid. Your browser rehashes the bid entities; adding, removing or editing any bid breaks it.
+                </dd>
+              </div>
             </dl>
           </Panel>
           <QueryDisclosure query={QUERY_SNIPPETS.results} />
@@ -112,8 +124,8 @@ function ResultRow({ result, title }: { result: Result; title: string }) {
         <div className="border-t border-line px-5 py-4">
           {v ? (
             <ul className="flex flex-col gap-3">
-              {[v.issuer, v.rules, v.history].map((check) => (
-                <li key={check.label} className="flex gap-3">
+              {[v.issuer, v.rules, v.history, v.ladder, v.transcript].map((check, i) => (
+                <li key={i} className="flex gap-3">
                   <span className="mt-0.5">
                     <CheckMark ok={check.ok} />
                   </span>

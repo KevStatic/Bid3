@@ -367,5 +367,60 @@
       "canonical": "{\"auctionId\":\"bid3-ü-✓\",\"epoch\":7,\"listingId\":\"lot-x\",\"startPriceMinor\":1,\"stepBps\":1,\"countdownMs\":10000,\"ceilingMinor\":2,\"timeLimitMs\":1,\"unit\":\"crédits\"}",
       "hash": "0x920336fe1ba9404f38ae4527d991d38d2d2ad7047be4d79973ebfcf08ea2be0e"
     }
+  ],
+  "transcripts": [
+    {
+      "bids": [],
+      "canonical": "[]",
+      "digest": "0x4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    {
+      "bids": [
+        {
+          "bidIndex": 1,
+          "bidderAlias": "M4",
+          "priceMinor": 10500,
+          "serverSeq": 2
+        },
+        {
+          "bidIndex": 0,
+          "bidderAlias": "K7",
+          "priceMinor": 10000,
+          "serverSeq": 1
+        },
+        {
+          "bidIndex": 2,
+          "bidderAlias": "K7",
+          "priceMinor": 11025,
+          "serverSeq": 3
+        }
+      ],
+      "canonical": "[{\"bidIndex\":0,\"bidderAlias\":\"K7\",\"priceMinor\":10000,\"serverSeq\":1},{\"bidIndex\":1,\"bidderAlias\":\"M4\",\"priceMinor\":10500,\"serverSeq\":2},{\"bidIndex\":2,\"bidderAlias\":\"K7\",\"priceMinor\":11025,\"serverSeq\":3}]",
+      "digest": "0x9f336104580e0c73b04e61dd4f0acecd4f12ae11c5601f0264849e6addbfa482"
+    },
+    {
+      "bids": [
+        {
+          "bidIndex": 0,
+          "bidderAlias": "ü✓",
+          "priceMinor": 1,
+          "serverSeq": 7
+        },
+        {
+          "bidIndex": 1,
+          "bidderAlias": "🔨",
+          "priceMinor": 2,
+          "serverSeq": 9
+        },
+        {
+          "bidIndex": 2,
+          "bidderAlias": "a\"b\\c\n",
+          "priceMinor": 2,
+          "serverSeq": 12
+        }
+      ],
+      "canonical": "[{\"bidIndex\":0,\"bidderAlias\":\"\\u00fc\\u2713\",\"priceMinor\":1,\"serverSeq\":7},{\"bidIndex\":1,\"bidderAlias\":\"\\ud83d\\udd28\\u007f\",\"priceMinor\":2,\"serverSeq\":9},{\"bidIndex\":2,\"bidderAlias\":\"a\\\"b\\\\c\\n\",\"priceMinor\":2,\"serverSeq\":12}]",
+      "digest": "0xe0a3c3a7bb7fd8ce87893be97129bf41ef8b0493d2cdfee223c53ab6cb5a4275"
+    }
   ]
 }

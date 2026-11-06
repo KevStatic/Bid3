@@ -56,7 +56,10 @@ async function main() {
           method: "POST",
           body: JSON.stringify({ entityKey: written.entityKey, txHash: written.txHash }),
         });
-        log(`${written.reused ? "found existing" : "wrote"} ${item.kind} ${item.logicalId} -> ${written.entityKey}`);
+        // For bids: how long after the engine accepted the press it became an Arkiv entity.
+        const acceptedAtMs = Number(item.payload.acceptedAtMs);
+        const lag = item.kind === "AuctionBid" && acceptedAtMs > 0 ? ` (${Date.now() - acceptedAtMs} ms after the engine accepted it)` : "";
+        log(`${written.reused ? "found existing" : "wrote"} ${item.kind} ${item.logicalId} -> ${written.entityKey}${lag}`);
         failures = 0;
       } catch (error) {
         failures += 1;
