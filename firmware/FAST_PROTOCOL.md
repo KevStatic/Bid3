@@ -1,4 +1,4 @@
-# Bid3 V5 fast extension (V4 bid transport retained)
+# Bid3 V6 OFF/LOST extension (V5 input and V4 bid transport retained)
 
 All integers below are little endian; packet sizes include their authenticators. The original BLE manufacturer bytes, service UUID, INFO/TELEMETRY/CHALLENGE/RESPONSE UUIDs, BTB1 request, BTP1 proof, signature domains, enrollment and NVS namespaces are preserved. `BUTTON_PROTOCOL.md` documents that original path. It remains a detection/diagnostic fallback; historical count deltas never create auction intents.
 
@@ -57,3 +57,11 @@ A dedicated core1 input task verifies the receipt and queues the UI update. ECDS
 Standalone JOIN/LEAVE packets are locally acknowledged RECEIVED when there is no fresh engine state. This clears the tag's transport wait without admitting it to an auction or repeatedly disconnecting. Offline BID is REFUSED. Fresh bridge connectivity requests signed re-announcement. The status line keeps `build=V4_WORKING_BASE` for existing bridge compatibility and adds `firmware=V5_LIVE_INPUT`. All three sketches need V5 for the new receipt; the deployed V4 bridge does not need replacement.
 
 Advertising payload/service/enrollment are unchanged; advertising interval is 50–75 ms instead of 250–300 ms. Requested established connection interval is 7.5–15 ms with zero peripheral latency. Missing-sensor configuration retries are deferred while connected. These remove avoidable waits, but cold authentication and actual button-to-pixel timing remain hardware measurements, not a zero-latency claim.
+
+## V6 switch and loss state
+
+The existing heartbeat byte7 now drives participation availability after MAC/context verification. The tag emits a heartbeat immediately on a debounced switch change; periodic 250 ms heartbeats remain. Heartbeat flag0 means intentional OFF. Missing/disconnected authenticated liveness uses the existing 1500 ms threshold and means LOST, not a fabricated LEAVE. Signed JOIN/LEAVE updates the same physical-state view, ordered against heartbeat observations by tag uptime so a delayed older JOIN cannot overwrite a newer OFF observation.
+
+OFF suppresses radar presence, new button-input overlays for that tag, and new BID/JOIN forwarding. Tag-side participation generations discard unsent work from before OFF, even after rapid OFF/ON. A press whose signing was interrupted by OFF is discarded before transmission without leaving a sequence gap. Already transmitted work retains exact retry/deduplication semantics; the engine determines its accepted result.
+
+The matching engine isolates LINK LOST to UNKNOWN for that seat. Other ACTIVE seats and the current countdown continue. LINK OK alone is not renewed admission: a signed JOIN is required. Infrastructure-wide pauses remain separate. No wire-size, UUID, signature, key, pricing, Arkiv schema or bridge migration is introduced. Status preserves build=V4_WORKING_BASE and reports firmware=V6_TAG_OFF_FIX.

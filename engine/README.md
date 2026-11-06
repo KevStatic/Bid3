@@ -24,7 +24,7 @@ All rules live in `bid3_engine/auction.py`, a pure state machine with no I/O and
 DRAFT --open--> LOBBY --2 paddles on--> OPEN --first BID--> COUNTDOWN --hammer--> SOLD_LOCKED
                   ^                       |                   |  ^
                   +--- a paddle leaves ---+       BID restarts +--+
-            LOBBY/OPEN/COUNTDOWN --signal lost / bridge or gateway down--> PAUSED --all back--> (resume)
+            LOBBY/OPEN/COUNTDOWN --bridge or gateway down--> PAUSED --all back--> (resume)
             LOBBY/OPEN --time limit, no bids--> UNSOLD          any --operator--> CANCELLED
 ```
 
@@ -89,3 +89,9 @@ The worker drains this; the live round never waits on it.
 ## Signatures
 
 `INTENT_SIGNATURES_REQUIRED=1` makes the engine reject any JOIN/LEAVE/BID that isn't signed by the tag's enrolled secp256k1 key. Give each seat a `publicKey` when creating the auction. The message format is in `bid3_engine/intents.py`. It's off by default until the firmware signs intents.
+
+### V6 tag-specific fault policy
+
+A tag LINK LOST marks only that paddle UNKNOWN and blocks its new bids. Other healthy bidders continue; its existing accepted bid remains binding. The current deadline is unchanged and can close with an unavailable accepted leader. No accepted bid means no fabricated winner.
+
+LINK OK reports radio recovery but does not activate the paddle; a fresh admitted JOIN is required. JOIN/recovery does not restart the live countdown. Gateway/bridge outages and engine restart still pause the entire room under the existing recovery policy. Intentional LEAVE remains OUT, distinct from an uncertain link fault. State field names, signature bytes, price ladder, rules hash and Arkiv records are unchanged.

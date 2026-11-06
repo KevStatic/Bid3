@@ -11,8 +11,8 @@ Rules (see the plan, section 3):
     restarts the hammer countdown. The leader cannot outbid themselves.
   - A press carrying an out-of-date stateVersion (a bid landed since) is STALE.
   - The leader switching off keeps their bid binding.
-  - Link loss on a switched-on paddle, or the bridge/gateway going down,
-    pauses the round. Nothing is ever awarded while uncertain.
+  - A paddle-specific fault blocks that paddle; other bidders and the countdown continue.
+    Bridge/gateway failure pauses the whole round.
   - When the countdown ends with a leader and everything healthy: SOLD, once.
 
 Serialized state matches web/src/lib/types.ts (AuctionState) exactly.
@@ -356,7 +356,7 @@ class Auction:
         return out
 
     def link(self, now_ms: int, tag_ref: str, ok: bool) -> Outcome:
-        """Radio link report from the gateway. Losing a switched-on paddle pauses the round."""
+        """A tag fault isolates that bidder. Recovery requires a fresh admitted JOIN."""
         out = Outcome()
         seat = self.seat_by_tag(tag_ref)
         if seat is None or self.is_closed():
@@ -366,14 +366,9 @@ class Auction:
             self._bump(now_ms)
             out.changed = True
             out.journal.append(("SIGNAL_LOST", {"alias": seat.alias}))
-            if self.phase in ("OPEN", "COUNTDOWN"):
-                paused = self.pause(now_ms, f"Lost the signal from Paddle {seat.alias}.")
-                out.journal.extend(paused.journal)
         elif ok and seat.status == "UNKNOWN":
-            seat.status = "ACTIVE"
-            self._bump(now_ms)
-            out.changed = True
-            out.journal.append(("SIGNAL_BACK", {"alias": seat.alias}))
+            # Radio presence is not admission; the signed JOIN completes recovery.
+            out.journal.append(("SIGNAL_BACK", {"alias": seat.alias, "requiresJoin": True}))
         return out
 
     def bid(self, now_ms: int, tag_ref: str, session: str | None = None, seq: int | None = None, state_version: int | None = None) -> Outcome:
@@ -394,7 +389,7 @@ class Auction:
             out.journal.append(("BID_REFUSED", {"alias": seat.alias, "reason": out.reason}))
             return out
         if seat.status != "ACTIVE":
-            out.ack, out.reason = "IGNORED", "paddle is switched off"
+            out.ack, out.reason = "IGNORED", "paddle signal is lost" if seat.status == "UNKNOWN" else "paddle is switched off"
             out.journal.append(("BID_REFUSED", {"alias": seat.alias, "reason": out.reason}))
             return out
         if self.leader_alias == seat.alias:
@@ -487,8 +482,6 @@ class Auction:
             return False, "two paddles were never on together"
         if self.health["bridge"] != "ok" or self.health["gateway"] != "ok":
             return False, "the gateway or bridge is down"
-        if any(s.status == "UNKNOWN" for s in self.seats):
-            return False, "a paddle's signal is lost"
         if self.result is not None:
             return False, "a result is already recorded"
         return True, None

@@ -19,9 +19,9 @@ These rules apply to the existing authoritative engine with this firmware/bridge
 | No bid has ever been accepted | There is no latest bidder to award. The round remains open/lobby until its rules' time limit, then UNSOLD. |
 | Leader intentionally switches OFF | Signed LEAVE stops further participation; their accepted leading bid remains binding and can still win. |
 | A different tag is merely nearby/latest present | It never replaces the accepted leader automatically. |
-| Tag disconnects / radio heartbeat missing | Gateway reports LINK LOST; an active seat becomes UNKNOWN and the engine pauses. Silence is not a signed LEAVE. |
+| Tag disconnects / radio heartbeat missing | Gateway shows LOST; only that seat becomes UNKNOWN and cannot bid. Healthy bidders and the existing countdown continue. Silence is not a signed LEAVE. |
 | Bridge/gateway/engine connection fails | Pause and refuse stale work. Do not declare a local winner while the engine is unavailable. |
-| Recovery | Re-authenticate/re-announce, satisfy engine health conditions, then resume according to engine policy. A running countdown restarts in full after resync. |
+| Tag recovery | Re-authenticate, synchronize the quote and complete a fresh JOIN. It does not reset the live countdown or replay old presses. Global infrastructure recovery retains the existing pause/resync policy. |
 | Press arrives at the hammer boundary | Engine clock/order governs; late arrivals cannot reopen a locked result. A tag uptime is diagnostic, not an authority to backdate a bid. |
 | Price ceiling reached | Refuse further raises; current leader can win at expiry. |
 | Power loss / restart | Existing keys persist in NVS. Reconnection establishes fresh session context. An unacknowledged press is uncertain and is not silently replayed as a later, higher bid. Consult the engine journal. |

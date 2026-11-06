@@ -363,7 +363,7 @@ void setupTag() {
   ledPwmReady=ledcAttach(LED,LED_PWM_HZ,8);
   if(ledPwmReady) ledcWrite(LED,LED_DUTY);
   else {fatal=true;Serial.println("FATAL: LED PWM setup failed; indicator remains OFF.");return;}
-  Serial.printf("\nBid3 TAG%02u / V5 LIVE_INPUT / D2=GPIO4 to GND / static dim LED / 115200 baud\n",TAG);
+  Serial.printf("\nBid3 TAG%02u / V6 TAG_OFF_FIX / D2=GPIO4 to GND / static dim LED / 115200 baud\n",TAG);
   Serial.println("D2 uses INPUT_PULLUP: released=HIGH, pressed=LOW; 30 ms debounce; one count per press.");
   if(xTaskCreate(buttonTask,"button-input",4096,nullptr,2,nullptr)!=pdPASS){
     fatal=true;Serial.println("FATAL: button sampler task creation failed. BLE not started.");return;

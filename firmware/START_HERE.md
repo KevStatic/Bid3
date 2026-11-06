@@ -1,4 +1,4 @@
-# Bid3 V5 — upload these three sketches
+# Bid3 V6 — upload these three sketches
 
 This is the corrected Gateway, Tag01 and Tag02 source package, rebuilt from the exact working ZIP you supplied. The original BLE advertisements, service, identity storage, discovery and signed button-proof exchange are the foundation. An authenticated persistent notification channel is enabled only after that original exchange succeeds.
 
@@ -14,6 +14,16 @@ This is the corrected Gateway, Tag01 and Tag02 source package, rebuilt from the 
 
 Discovery starts automatically when powered. No ESP RESET/BOOT button, `p` command, `GATEWAY_KEY` enrollment command, `BID3_ARM` command or GPIO33 connection is required for normal operation with your supplied identities. Firmware includes your two real tag public enrollments and pins your actual gateway public key. It never prints or replaces existing private keys silently.
 
+## OFF and fault behavior
+
+- Intentional switch OFF: tag shows OFF / OUT OF BIDDING and loses its radar dot. New bids are blocked; unsent pre-OFF presses are discarded.
+- Connection/device fault: tag shows LOST and cannot bid. The other bidders continue when the matching engine update is deployed.
+- Recovery: authenticated current state and a fresh admitted JOIN are required; old presses are not replayed and tag recovery does not reset the countdown.
+- Accepted bids remain binding. An accepted leader can win even after OFF or a tag fault.
+- A gateway, bridge or engine outage affects the room and retains the existing global pause policy.
+
+Upload all three matching V6 sketches. Repository users should deploy the matching engine/ code from this same version. The standalone archive includes engine-update/tag-fault-policy.patch for users updating an older checkout. The OFF display fix itself works without the engine.
+
 ## New button behavior
 
 After FAST_READY, pressing either D2 button sends an immediate, session-authenticated input receipt to the OLED independently of bid signing and engine acknowledgements. You see **BUTTON PRESSED**, the tag number, press count and **DOWN/UP** state. This also works without the laptop bridge. The tag stays connected instead of repeatedly reconnecting on an unacknowledged offline JOIN. The input display can interrupt startup/animation frames.
@@ -22,7 +32,7 @@ The 30 ms switch debounce remains intentional. BLE transmission, scheduling and 
 
 ## What you should see
 
-The gateway announces `Bid3 V5 WORKING_BASE`, then discovers the same `BagTrail-Tag01` and `BagTrail-Tag02` BLE devices as your working ZIP. The original signed checks produce `TAG01 BUTTON SYNC` / `TAG02 BUTTON SYNC`. Successful fast negotiation then prints:
+The gateway announces `Bid3 V6 WORKING_BASE`, then discovers the same `BagTrail-Tag01` and `BagTrail-Tag02` BLE devices as your working ZIP. The original signed checks produce `TAG01 BUTTON SYNC` / `TAG02 BUTTON SYNC`. Successful fast negotiation then prints:
 
 ```
 BID3_LINK tag=TAG1 state=FAST_READY
@@ -47,10 +57,10 @@ Without the engine/bridge, a verified physical press is a **BUTTON PRESSED / INP
 
 | Observation | Meaning / next check |
 |---|---|
-| Gateway still prints old `BID3_HEALTH_JSON` at 460800 | An older build is running. Upload this package's `Gateway/Gateway.ino`; V5 is 115200 and has the V5 startup/status lines. |
+| Gateway still prints old `BID3_HEALTH_JSON` at 460800 | An older build is running. Upload this package's `Gateway/Gateway.ino`; V6 is 115200 and has the V6 startup/status lines. |
 | No `proof_seen` and no verified snapshot | Original discovery/authentication has not succeeded. Check matching uploads, tag slide switches, power and antennas. |
 | `REJECTED_TAG=... enrollment_mismatch` | Device identity differs from the supplied public enrollment. Do not erase keys to bypass it. |
-| Proof seen but no FAST_READY | Optional channel negotiation failed; signed snapshot diagnostics remain available. Check that both tag sketches are V5. |
+| Proof seen but no FAST_READY | Optional channel negotiation failed; signed snapshot diagnostics remain available. Check that both tag sketches are V6. |
 | FAST_READY but no accepted BID | Confirm the included bridge, engine connection, enrolled seat keys, two joined bidders and OPEN/COUNTDOWN phase. |
 
 `FastConfig.h` contains `BID3_ENABLE_FAST_CHANNEL`. Its default is 1. Setting it to 0 in **all three sketch folders** disables the new channel for comparison with the original signed-snapshot radio path; it does not implement auction bidding. The working archive hash and unchanged helper hashes are recorded in `legacy_docs/README.md` and `legacy_docs/BASELINE_SHA256.json`.

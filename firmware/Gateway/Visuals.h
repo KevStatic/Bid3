@@ -10,6 +10,7 @@
 #include "Config.h"
 struct TagView {
   bool seen=false,verified=false,valid=false,moving=false;
+  bool switchKnown=false,switchOn=true,linkKnown=false,linkOnline=true;
   uint32_t inputGeneration=0,inputCount=0,inputAt=0;bool inputKnown=false;
   bool buttonKnown=false,buttonHeld=false;uint32_t buttonCount=0;
   int rssi=-127; uint32_t lastRadio=0,lastProof=0,count=0;
@@ -39,13 +40,28 @@ struct Canvas {
 // Apply only current-session, recent receipts. Release updates cannot erase an engine result.
 inline bool applyInput(View&v,unsigned tag,uint32_t generation,uint32_t count,bool held,uint32_t at,uint32_t now){
  if(tag>=2||!count||uint32_t(now-at)>500)return false;
+ if((v.tags[tag].switchKnown&&!v.tags[tag].switchOn)||(v.tags[tag].linkKnown&&!v.tags[tag].linkOnline))return false;
  auto&t=v.tags[tag];if(t.inputGeneration!=generation){t.inputGeneration=generation;t.inputCount=0;t.inputKnown=false;}
  if(count<t.inputCount)return false;
  bool pressed=count>t.inputCount;t.inputCount=count;t.inputKnown=true;t.buttonKnown=true;t.buttonHeld=held;t.buttonCount=count;
  if(pressed){t.inputAt=at;v.inputActive=true;v.inputTag=tag+1;v.inputAt=now;v.event=6;v.eventTag=tag+1;v.eventAt=now;}
  return pressed;
 }
-inline bool fresh(const TagView&t,uint32_t now){return t.verified&&uint32_t(now-t.lastProof)<Config::FRESH_MS;}
+inline bool tagPresent(const TagView&t){return (!t.switchKnown||t.switchOn)&&(!t.linkKnown||t.linkOnline);}
+inline bool applyAvailability(View&v,unsigned tag,bool online,bool known,bool on,uint32_t now){
+ if(tag>=2)return false;auto&t=v.tags[tag];
+ bool changed=!t.linkKnown||t.linkOnline!=online||t.switchKnown!=known||(known&&t.switchOn!=on);
+ bool wentOff=known&&!on&&(!t.switchKnown||t.switchOn);
+ bool wentLost=t.linkKnown&&t.linkOnline&&!online&&(!known||on);
+ t.linkKnown=true;t.linkOnline=online;t.switchKnown=known;t.switchOn=on;
+ if(!tagPresent(t)){t.seen=false;t.buttonHeld=false;
+  if(v.inputTag==tag+1)v.inputActive=false;
+  if(v.eventTag==tag+1&&(v.event==3||v.event==4||v.event==5||v.event==6))v.event=0;
+ }
+ if(wentOff||wentLost){v.event=wentOff?7:8;v.eventTag=tag+1;v.eventAt=now;}
+ return changed;
+}
+inline bool fresh(const TagView&t,uint32_t now){return tagPresent(t)&&t.verified&&uint32_t(now-t.lastProof)<Config::FRESH_MS;}
 // Canonical Ethereum facets for a rotating, thin 3D mark.
 // Checker shading distinguishes facets on the monochrome OLED without distortion.
 inline void facet(Canvas&c,int ax,int ay,int bx,int by,int cx,int cy,int shade){
@@ -103,6 +119,10 @@ inline void drawVisual(Canvas&c,const View&v,uint32_t now,uint32_t sincePower,co
   }
   if(v.sold){c.center(3,"BID3");c.center(17,"SOLD",2);snprintf(b,sizeof(b),"SEAT %u",v.winner);c.center(38,b);
     snprintf(b,sizeof(b),"%llu.%02llu",(unsigned long long)(v.hammerPrice/100),(unsigned long long)(v.hammerPrice%100));c.center(53,b);return;}
+  if((v.event==7||v.event==8)&&uint32_t(now-v.eventAt)<1400){
+    c.center(3,v.event==7?"TAG SWITCHED OFF":"TAG LINK LOST");snprintf(b,sizeof(b),"TAG%02u",v.eventTag);c.center(18,b,2);
+    c.center(41,"OUT OF BIDDING");c.center(55,"NO NEW BIDS");return;
+  }
   if((v.event==3||v.event==4||v.event==5)&&uint32_t(now-v.eventAt)<2200){
     c.center(3,v.event==4?"BID ACCEPTED":v.event==5?"BID REFUSED":"BUTTON VERIFIED");snprintf(b,sizeof(b),"TAG%02u",v.eventTag);c.center(18,b,2);
     if(v.eventTag>=1&&v.eventTag<=2){const auto&q=v.tags[v.eventTag-1];
@@ -123,13 +143,13 @@ inline void drawVisual(Canvas&c,const View&v,uint32_t now,uint32_t sincePower,co
     float a=t*1.8f;for(int trail=0;trail<4;++trail)c.line(31,35,31+int(22*std::cos(a-trail*.10f)),35+int(22*std::sin(a-trail*.10f)));
     c.text(63,14,v.phase);
     for(int i=0;i<2;++i){const auto &q=v.tags[i];bool ok=fresh(q,now);int yy=27+i*15;
-      snprintf(b,sizeof(b),"%02d %s",i+1,ok?"AUTH":q.seen&&now-q.lastRadio<10000?"SEEN":"SEEK");c.text(63,yy,b);
-      if(q.seen&&now-q.lastRadio<10000){int x=i?42:19,y=i?44:25;c.circle(x,y,3);if(ok)c.fill(x-1,y-1,3,3);bars(c,112,yy+7,q.rssi);}}
+      snprintf(b,sizeof(b),"%02d %s",i+1,q.switchKnown&&!q.switchOn?"OFF":q.linkKnown&&!q.linkOnline?"LOST":ok?"AUTH":q.seen&&now-q.lastRadio<10000?"SEEN":"SEEK");c.text(63,yy,b);
+      if(tagPresent(q)&&q.seen&&now-q.lastRadio<10000){int x=i?42:19,y=i?44:25;c.circle(x,y,3);if(ok)c.fill(x-1,y-1,3,3);bars(c,112,yy+7,q.rssi);}}
     // The outer ring reaches y=57. Do not clear the old footer band here:
     // it erased the bottom arc even after the BID3 label was removed.
   }else if(scene==1){
     for(int i=0;i<2;++i){const auto&q=v.tags[i];int x=i*65;bool ok=fresh(q,now);
-      snprintf(b,sizeof(b),"TAG%02d",i+1);c.text(x+2,14,b);c.text(x+2,25,ok?"VERIFIED":q.verified?"STALE":"WAITING");
+      snprintf(b,sizeof(b),"TAG%02d",i+1);c.text(x+2,14,b);c.text(x+2,25,q.switchKnown&&!q.switchOn?"OFF":q.linkKnown&&!q.linkOnline?"LOST":ok?"VERIFIED":q.verified?"STALE":"WAITING");
       if(q.verified){snprintf(b,sizeof(b),"AGE %lus",(unsigned long)((now-q.lastProof)/1000));c.text(x+2,36,b);}
       if(q.buttonKnown){snprintf(b,sizeof(b),"PUSH %lu",(unsigned long)q.buttonCount);c.text(x+2,47,b);}
       else c.text(x+2,47,"PUSH --");

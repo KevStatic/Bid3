@@ -41,4 +41,16 @@ struct InputWindow {
  void commit(const uint8_t*p){seq=get32(p+40);count=get32(p+52);}
 };
 
+// Switch state is ordered on the tag's own uptime, shared by heartbeat and intents.
+struct SwitchState {
+ bool known=false,on=false;uint32_t at=0;
+ bool observe(bool next,uint32_t when){
+  if(known&&int32_t(when-at)<0)return false;
+  bool changed=!known||on!=next;known=true;on=next;at=when;return changed;
+ }
+};
+inline bool heartbeatFields(const uint8_t*p,size_t n,uint8_t tag,const uint8_t nonce[32],const uint8_t boot[8]){
+ return n==HEARTBEAT&&!memcmp(p,"B4H1",4)&&p[4]==1&&p[5]==tag&&p[6]==0&&p[7]<=1&&get32(p+40)&&!memcmp(p+8,nonce,32)&&!memcmp(p+56,boot,8);
+}
+
 }

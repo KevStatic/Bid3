@@ -201,8 +201,8 @@ void setupGateway(){
  events=xQueueCreate(32,sizeof(Event));scanLock=xSemaphoreCreateMutex();oled.begin();
  Preferences ui;if(ui.begin("bt-ui",true)){oled.sh1106=ui.getBool("sh1106",Config::DEFAULT_SH1106);sound.activeModule=ui.getBool("activeBuzzer",Config::DEFAULT_ACTIVE_BUZZER);sound.activeLow=ui.getBool("activeLow",Config::DEFAULT_ACTIVE_LOW);ui.end();}
  fastFeature.store(fastGatewayInit());fxActiveModule.store(sound.activeModule);fxActiveLow.store(sound.activeLow);
- Serial.println("\nBid3 V5 LIVE_INPUT / original BT discovery and BTB1 signed proofs / 115200 baud");
- Serial.println("Upload the matching V5 tag sketches. Fast input begins only after the original enrolled proof verifies.");
+ Serial.println("\nBid3 V6 TAG_OFF_FIX / original BT discovery and BTB1 signed proofs / 115200 baud");
+ Serial.println("Upload the matching V6 tag sketches. Fast input begins only after the original enrolled proof verifies.");
  Serial.println("NO GPIO33 required. BLE runs while USB-powered, independently of OLED/switch availability.");
  if(!events||!scanLock||!ledsReady){view.fatal=true;Serial.println("FATAL: queue, LED PWM, cryptographic identity or verifier self-test failed.");}
  else{TaskHandle_t handle=nullptr;
@@ -228,26 +228,30 @@ void loopGateway(){
   }
   if(e.type==2){bool newlyVerified=!fresh(t,e.at);t.seen=true;t.verified=true;t.lastRadio=e.at;t.lastProof=e.at;t.rssi=e.rssi;t.valid=e.valid;t.moving=e.moving;++t.count;++view.proofs;
    if(e.valid){if(t.historyCount<20)++t.historyCount;else memmove(t.history,t.history+1,19);t.history[t.historyCount-1]=std::min(9,int(e.norm/100));}
-   String digest=Security::hex(e.digest,8);snprintf(view.digest,sizeof(view.digest),"%s",digest.c_str());if(!((view.event==3||view.event==4||view.event==5||view.event==6)&&uint32_t(now-view.eventAt)<2200)){view.event=1;view.eventTag=e.tag;view.eventAt=now;}if(newlyVerified&&oled.ready&&active.load())queueSound(Audio::VERIFIED,e.tag);
+   String digest=Security::hex(e.digest,8);snprintf(view.digest,sizeof(view.digest),"%s",digest.c_str());if(!((view.event==3||view.event==4||view.event==5||view.event==6||view.event==7||view.event==8)&&uint32_t(now-view.eventAt)<2200)){view.event=1;view.eventTag=e.tag;view.eventAt=now;}if(newlyVerified&&oled.ready&&active.load())queueSound(Audio::VERIFIED,e.tag);
   }else if(e.type==3){++view.errors;view.event=2;view.eventTag=e.tag;view.eventAt=now;errorUntil=now+2000;}
   else if(e.type==5){
    t.buttonCount=e.buttonCount;t.buttonHeld=e.buttonHeld;t.buttonKnown=true;
    if(e.buttonDelta){view.event=3;view.eventTag=e.tag;view.eventAt=now;if(oled.ready&&active.load())queueSound(Audio::VERIFIED,e.tag);}
   }
  }
+ bool availabilityUrgent=false;
+ for(unsigned tag=0;tag<2;++tag){auto state=fastAvailability(tag,millis());auto&t=view.tags[tag];
+  if(state.tracked&&(state.online||!fastSlots[tag].live.load()||t.linkKnown||state.known))availabilityUrgent|=applyAvailability(view,tag,state.online,state.known,state.on,millis());
+  if(state.online&&(!state.known||state.on)){t.seen=true;t.verified=true;t.lastRadio=millis();t.lastProof=millis();}
+ }
  bool inputUrgent=false;InputUi input;
  while(fastInputUi&&xQueueReceive(fastInputUi,&input,0)==pdTRUE){
   if(input.tag>=2||!fastSlots[input.tag].live.load()||input.generation!=fastSlots[input.tag].generation.load())continue;
   bool pressed=applyInput(view,input.tag,input.generation,input.count,input.held,input.at,millis());inputUrgent|=pressed;
  }
- FastUi update;while(fastUi&&xQueueReceive(fastUi,&update,0)==pdTRUE){if(update.kind==4){view.sold=false;}else if(update.kind==3){view.sold=true;view.winner=update.tag;view.hammerPrice=update.price;}else if(update.tag<1||update.tag>2||!view.tags[update.tag-1].inputKnown||update.count>=view.tags[update.tag-1].inputCount){view.event=update.kind==1?4:5;view.eventTag=update.tag;view.eventAt=millis();if(update.tag>=1&&update.tag<=2)view.tags[update.tag-1].buttonCount=update.count;}}
+ FastUi update;while(fastUi&&xQueueReceive(fastUi,&update,0)==pdTRUE){if(update.kind==4){view.sold=false;}else if(update.kind==3){view.sold=true;view.winner=update.tag;view.hammerPrice=update.price;}else if((update.tag<1||update.tag>2||!view.tags[update.tag-1].inputKnown||update.count>=view.tags[update.tag-1].inputCount)&&(update.tag<1||update.tag>2||tagPresent(view.tags[update.tag-1]))){view.event=update.kind==1?4:5;view.eventTag=update.tag;view.eventAt=millis();if(update.tag>=1&&update.tag<=2)view.tags[update.tag-1].buttonCount=update.count;}}
  now=millis(); // UI events above carry current timestamps; do not render with the old loop time.
  if(roomVersion.load()!=Fast::MISSING)snprintf(view.phase,sizeof(view.phase),"%s",roomPhase.load()==Fast::PAUSED?"PAUSED":roomPhase.load()==Fast::COUNTDOWN?"COUNTDOWN":roomPhase.load()==Fast::OPEN?"OPEN":roomPhase.load()==Fast::CLOSED?"CLOSED":"LOBBY");
- if(oled.ready&&(inputUrgent||(oled.canQueue()&&uint32_t(now-lastFrame)>=1000/Config::DISPLAY_FPS))){lastFrame=now;
-  drawVisual(oled.screen,view,now,now-powerAt,Config::DISPLAY_LOCATION);oled.queueFrame(inputUrgent);}
+ if(oled.ready&&((inputUrgent||availabilityUrgent)||(oled.canQueue()&&uint32_t(now-lastFrame)>=1000/Config::DISPLAY_FPS))){lastFrame=now;
+  drawVisual(oled.screen,view,now,now-powerAt,Config::DISPLAY_LOCATION);oled.queueFrame(inputUrgent||availabilityUrgent);}
  if(!oled.service()){fxPowered.store(false);stopBeep();Serial.println("OLED I2C lost: recovering display; BLE discovery continues.");}
 
- for(int t=0;t<2;++t)if(fastSlots[t].auth.load()&&uint32_t(millis()-fastSlots[t].lastAt.load())<1500){view.tags[t].seen=true;view.tags[t].verified=true;view.tags[t].lastRadio=millis();view.tags[t].lastProof=millis();}
  fxPowered.store(oled.ready);fxFatal.store(view.fatal);fxActive.store(active.load());unsigned freshCount=0;bool sensorWarn=false;for(auto&t:view.tags)if(fresh(t,millis())){++freshCount;if(!t.valid)sensorWarn=true;}fxFresh.store(freshCount);fxSensorWarning.store(sensorWarn);
  if(!fastFeature.load()){sound.activeModule=fxActiveModule.load();sound.activeLow=fxActiveLow.load();sound.tick(millis(),oled.ready&&!view.fatal);}
  if(ledsReady&&!fastFeature.load()){unsigned freshTags=0;bool warning=false;

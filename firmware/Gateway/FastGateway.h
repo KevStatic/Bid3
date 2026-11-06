@@ -9,7 +9,7 @@ struct FastSlot{
  uint8_t shared[32]={0},key[32]={0},nonce[32]={0},boot[8]={0},lastEvent[Fast::EVENT]={0};
  BLERemoteCharacteristic*channel=nullptr;SemaphoreHandle_t state=nullptr,io=nullptr;
  uint32_t ctrl=0,eventSeq=0,beatSeq=0,pendingSeq=0,attachAt=0;uint8_t pendingKind=0,lastResult=Fast::REFUSED;
- Fast::InputWindow inputWindow;
+ Fast::InputWindow inputWindow;Fast::SwitchState presence;
  bool pending=false,acked=false;char session[82]={0};
 };
 std::atomic<bool> fastFeature(false);
@@ -38,13 +38,18 @@ void fastNotify(int tag,uint8_t*p,size_t n){
 void fastNotify0(BLERemoteCharacteristic*,uint8_t*p,size_t n,bool){fastNotify(0,p,n);}
 void fastNotify1(BLERemoteCharacteristic*,uint8_t*p,size_t n,bool){fastNotify(1,p,n);}
 struct FastGuard{SemaphoreHandle_t m;explicit FastGuard(SemaphoreHandle_t x):m(x){if(m)xSemaphoreTake(m,portMAX_DELAY);}~FastGuard(){if(m)xSemaphoreGive(m);}};
+struct FastAvailability{bool tracked=false,online=false,known=false,on=false;};
+FastAvailability fastAvailability(unsigned tag,uint32_t now){
+ auto&s=fastSlots[tag];FastGuard guard(s.state);
+ return {s.generation.load()!=0,s.live.load()&&s.auth.load()&&uint32_t(now-s.lastAt.load())<1500,s.presence.known,s.presence.on};
+}
 bool fastAttach(int tag,BLERemoteService*service,const uint8_t proof[199]){
  fastSlots[tag].proofSeen.store(true);if(!fastKeysReady.load())return false;
  if(clients[tag]->getMTU()<Fast::EVENT+3){fastLink(tag,"LEGACY_PROOF_ONLY_MTU_LIMIT");return false;}auto*notify=service->getCharacteristic(Fast::UUID);auto*channel=service->getCharacteristic(Fast::CONTROL_UUID);
  if(!notify||!notify->canNotify()||!channel||!channel->canWrite()){fastLink(tag,"LEGACY_PROOF_ONLY");return false;}
  auto&s=fastSlots[tag];uint8_t derived[32];if(!FastCrypto::key(s.shared,proof,derived))return false;
  {FastGuard guard(s.state);memcpy(s.key,derived,32);memcpy(s.nonce,proof+94,32);memcpy(s.boot,proof+14,8);
-  Fast::session(s.boot,s.nonce,s.session);s.channel=channel;s.generation.fetch_add(1);s.inputWindow={};s.ctrl=0;s.eventSeq=0;s.beatSeq=0;s.pending=false;s.acked=false;s.attachAt=millis();s.lastAt.store(s.attachAt);s.auth.store(false);s.live.store(true);}
+  Fast::session(s.boot,s.nonce,s.session);s.channel=channel;s.generation.fetch_add(1);s.inputWindow={};s.presence={};s.ctrl=0;s.eventSeq=0;s.beatSeq=0;s.pending=false;s.acked=false;s.attachAt=millis();s.lastAt.store(s.attachAt);s.auth.store(false);s.live.store(true);}
  notify->registerForNotify(tag?fastNotify1:fastNotify0);
  // Optional live-channel tuning only; a declined update keeps the working interval.
  if(!clients[tag]->updateConnParams(6,12,0,200))fastLink(tag,"KEEPING_CURRENT_CONNECTION_INTERVAL");
@@ -79,7 +84,7 @@ void fastFeedbackTask(void*){
 uint8_t parseRoomPhase(const char*s){return !s?Fast::PAUSED:!strcmp(s,"OPEN")?Fast::OPEN:!strcmp(s,"COUNTDOWN")?Fast::COUNTDOWN:!strcmp(s,"LOBBY")?Fast::LOBBY:!strcmp(s,"SOLD_LOCKED")||!strcmp(s,"UNSOLD")||!strcmp(s,"CANCELLED")?Fast::CLOSED:Fast::PAUSED;}
 bool jsonInteger(const cJSON*x,uint32_t&out){if(!cJSON_IsNumber(x)||x->valuedouble<0||x->valuedouble>UINT32_MAX||double(uint32_t(x->valuedouble))!=x->valuedouble)return false;out=uint32_t(x->valuedouble);return true;}
 void fastCommand(char*line){
- if(!strcmp(line,"CMD=STATUS")){for(int t=0;t<2;++t)if(fastSlots[t].auth.load()){fastLinkEvent(t,true);fastSlots[t].resync.store(true);}return;}
+ if(!strcmp(line,"CMD=STATUS")){for(int t=0;t<2;++t)if(fastSlots[t].auth.load()){auto state=fastAvailability(t,millis());if(!state.known||state.on)fastLinkEvent(t,true);fastSlots[t].resync.store(true);}return;}
  const char*body=nullptr;enum{NO,STATE,ACK,HEALTH}type=NO;
  if(!strncmp(line,"AUCTION_STATE_JSON=",19)){body=line+19;type=STATE;}
  else if(!strncmp(line,"AUCTION_ACK_JSON=",17)){body=line+17;type=ACK;}
@@ -143,9 +148,9 @@ void fastWorker(void*){
   }
   FastRx e;while(xQueueReceive(fastBeats,&e,0)==pdTRUE){auto&s=fastSlots[e.tag];bool first=false;
    {FastGuard guard(s.state);auto*p=e.bytes;uint32_t seq=Fast::get32(p+40);
-    if(!s.live.load()||memcmp(p,"B4H1",4)||p[4]!=1||p[5]!=e.tag+1||memcmp(p+8,s.nonce,32)||memcmp(p+56,s.boot,8)||seq<=s.beatSeq||!FastCrypto::check(s.key,"Bid3.FastHeartbeat.v4",p,64))continue;
-    s.beatSeq=seq;s.lastAt.store(e.at);first=!s.auth.exchange(true);}
-   if(first){fastLink(e.tag,"FAST_READY");fastLinkEvent(e.tag,true);}
+    if(!s.live.load()||!Fast::heartbeatFields(p,e.n,e.tag+1,s.nonce,s.boot)||seq<=s.beatSeq||!FastCrypto::check(s.key,"Bid3.FastHeartbeat.v4",p,64))continue;
+    s.beatSeq=seq;s.presence.observe(p[7]!=0,Fast::get32(p+48));s.lastAt.store(e.at);first=!s.auth.exchange(true);}
+   if(first){fastLink(e.tag,"FAST_READY");auto state=fastAvailability(e.tag,millis());if(state.on)fastLinkEvent(e.tag,true);}
   }
   if(xQueueReceive(fastEvents,&e,0)==pdTRUE){auto&s=fastSlots[e.tag];uint8_t keyCopy[32];bool duplicate=false,alreadyAcked=false;uint8_t result=0;uint32_t seq=Fast::get32(e.bytes+40);
    {FastGuard guard(s.state);if(!s.live.load()||!Fast::eventFields(e.bytes,e.n,e.tag+1,s.nonce,s.boot)||!FastCrypto::check(s.key,"Bid3.FastEvent.v4",e.bytes,128))continue;
@@ -153,10 +158,11 @@ void fastWorker(void*){
     else if(seq<=s.eventSeq||s.pending||seq!=s.eventSeq+1)continue;memcpy(keyCopy,s.key,32);}
    if(duplicate){if(alreadyAcked)fastControl(e.tag,Fast::ACK,seq,result);continue;}
    uint32_t at=micros();if(!FastCrypto::verify(peers[e.tag],e.bytes))continue;uint32_t verifyUs=micros()-at;
-   {FastGuard guard(s.state);if(!s.live.load()||memcmp(keyCopy,s.key,32))continue;s.eventSeq=seq;s.pending=true;s.pendingSeq=seq;s.pendingKind=e.bytes[6];s.acked=false;memcpy(s.lastEvent,e.bytes,Fast::EVENT);s.lastAt.store(e.at);}
+   {FastGuard guard(s.state);if(!s.live.load()||memcmp(keyCopy,s.key,32))continue;s.eventSeq=seq;s.pending=true;s.pendingSeq=seq;s.pendingKind=e.bytes[6];s.acked=false;memcpy(s.lastEvent,e.bytes,Fast::EVENT);s.lastAt.store(e.at);if(e.bytes[6]==Fast::JOIN||e.bytes[6]==Fast::LEAVE)s.presence.observe(e.bytes[6]==Fast::JOIN,Fast::get32(e.bytes+48));}
+   auto state=fastAvailability(e.tag,millis());bool offBlocked=state.known&&!state.on&&(e.bytes[6]==Fast::BID||e.bytes[6]==Fast::JOIN);
    bool offline=!engineUp.load()||roomVersion.load()==Fast::MISSING||uint32_t(millis()-roomAt.load())>=1500;
-   if(offline&&e.bytes[6]!=Fast::PRESS){
-    uint8_t local=e.bytes[6]==Fast::BID?Fast::REFUSED:Fast::RECEIVED;
+   if((offline||offBlocked)&&e.bytes[6]!=Fast::PRESS){
+    uint8_t local=offBlocked||e.bytes[6]==Fast::BID?Fast::REFUSED:Fast::RECEIVED;
     {FastGuard guard(s.state);s.pending=false;s.acked=true;s.lastResult=local;}
     // Receipt is not auction admission. Keep standalone detection connected.
     fastControl(e.tag,Fast::ACK,seq,local);
@@ -167,7 +173,7 @@ void fastWorker(void*){
    }else forwardFastEvent(e.tag,e.bytes);
   }
   uint32_t lastRoom=roomAt.load(),now=millis();
-  if(uint32_t(now-lastStatus)>=500){lastStatus=now;Serial.printf("AUCTION_STATUS_JSON={\"build\":\"V4_WORKING_BASE\",\"firmware\":\"V5_LIVE_INPUT\",\"running\":true,\"tag1_fast\":%u,\"tag2_fast\":%u,\"tag1_proof_seen\":%u,\"tag2_proof_seen\":%u}\n",fastSlots[0].auth.load(),fastSlots[1].auth.load(),fastSlots[0].proofSeen.load(),fastSlots[1].proofSeen.load());}if(engineUp.load()&&uint32_t(now-lastRoom)>1500){engineUp.store(false);roomPhase.store(Fast::PAUSED);}
+  if(uint32_t(now-lastStatus)>=500){lastStatus=now;Serial.printf("AUCTION_STATUS_JSON={\"build\":\"V4_WORKING_BASE\",\"firmware\":\"V6_TAG_OFF_FIX\",\"running\":true,\"tag1_fast\":%u,\"tag2_fast\":%u,\"tag1_proof_seen\":%u,\"tag2_proof_seen\":%u}\n",fastSlots[0].auth.load(),fastSlots[1].auth.load(),fastSlots[0].proofSeen.load(),fastSlots[1].proofSeen.load());}if(engineUp.load()&&uint32_t(now-lastRoom)>1500){engineUp.store(false);roomPhase.store(Fast::PAUSED);}
   bool controlDue=roomDirty.exchange(false)||uint32_t(now-lastControl)>=200;
   for(int t=0;t<2;++t){auto&s=fastSlots[t];if(!s.live.load())continue;
    uint32_t heard=s.lastAt.load();now=millis();if(!clients[t]->isConnected()||uint32_t(now-heard)>(s.auth.load()?1500u:8000u)){fastDrop(t);FastGuard io(s.io);if(clients[t]->isConnected())clients[t]->disconnect();continue;}

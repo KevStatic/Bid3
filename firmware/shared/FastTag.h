@@ -14,7 +14,7 @@ std::atomic<bool> fastActive(false),fastKeyReady(false),fastAdmitted(false),fast
 std::atomic<uint32_t> fastVersion(Fast::MISSING),fastControlAt(0);
 std::atomic<uint8_t> fastPhase(Fast::PAUSED);portMUX_TYPE fastLock=portMUX_INITIALIZER_UNLOCKED;
 uint8_t fastShared[32]={0},fastKey[32]={0},fastNonce[32]={0};bool fastCapable=false;
-uint32_t fastControlSeq=0,fastSequence=0;std::atomic<uint32_t> fastBeatSequence(0),fastInputSequence(0);
+uint32_t fastControlSeq=0,fastSequence=0;std::atomic<uint32_t> fastBeatSequence(0),fastInputSequence(0),fastParticipationEpoch(0);
 FastPacket fastPending;bool fastWaiting=false;uint32_t fastWaitAt=0,fastSentAt=0;
 void fastFail(){fastActive.store(false);fastKeyReady.store(false);fastAdmitted.store(false);}
 bool fastSend(const uint8_t*p,size_t n){
@@ -27,7 +27,7 @@ void fastBody(uint8_t*p,const char*magic,uint8_t kind,uint32_t count,uint32_t at
  Fast::put32(p+44,version);Fast::put32(p+48,at);Fast::put32(p+52,count);memcpy(p+56,bootId,8);
 }
 void fastQueue(uint8_t kind,uint32_t count,uint32_t at,uint32_t version){
- if(!fastActive.load()||!fastInputs)return;FastPacket p;p.n=Fast::EVENT;fastBody(p.bytes,"B4E1",kind,count,at,kind==Fast::BID?version:Fast::MISSING);
+ if(!fastActive.load()||!fastInputs)return;FastPacket p;p.generation=fastParticipationEpoch.load();p.n=Fast::EVENT;fastBody(p.bytes,"B4E1",kind,count,at,kind==Fast::BID?version:Fast::MISSING);
  if(xQueueSend(fastInputs,&p,0)!=pdTRUE)fastFail();
 }
 // Runs in the button sampler, independently of ECDSA, sensor I/O and engine ACKs.
@@ -52,11 +52,11 @@ void fastSample(const ButtonInput::Snapshot&button,bool raw,uint32_t now){
  fastInputReceipt(button,now,enabled);
  if(raw!=lastRaw){lastRaw=raw;if(raw){edgeAt=now;edgeVersion=fastVersion.load();edgePhase=fastPhase.load();edgeAdmitted=fastAdmitted.load();}}
  if(enabled&&!wasActive){previousCount=button.count;wasOn=on;switchRaw=on;switchAt=now;fastQueue(on?Fast::JOIN:Fast::LEAVE,button.count,now,Fast::MISSING);}
- if(enabled&&on!=wasOn&&uint32_t(now-switchAt)>=50){wasOn=on;if(!on)fastAdmitted.store(false);fastQueue(on?Fast::JOIN:Fast::LEAVE,button.count,now,Fast::MISSING);}
+ if(enabled&&on!=wasOn&&uint32_t(now-switchAt)>=50){wasOn=on;if(!on){fastAdmitted.store(false);fastParticipationEpoch.fetch_add(1);}lastBeat=now-250;fastQueue(on?Fast::JOIN:Fast::LEAVE,button.count,now,Fast::MISSING);}
  if(enabled&&fastResync.exchange(false))fastQueue(on?Fast::JOIN:Fast::LEAVE,button.count,now,Fast::MISSING);
  if(enabled&&button.count>previousCount&&on){bool bid=edgeAdmitted&&edgeVersion!=Fast::MISSING&&(edgePhase==Fast::OPEN||edgePhase==Fast::COUNTDOWN);if(bid)fastQueue(Fast::BID,button.count,edgeAt,edgeVersion);}
  previousCount=button.count;wasActive=enabled;
- if(enabled&&uint32_t(now-lastBeat)>=250){lastBeat=now;FastPacket p;fastBody(p.bytes,"B4H1",0,button.count,now,fastVersion.load());p.bytes[7]=on;
+ if(enabled&&uint32_t(now-lastBeat)>=250){lastBeat=now;FastPacket p;fastBody(p.bytes,"B4H1",0,button.count,now,fastVersion.load());p.bytes[7]=wasOn;
   uint32_t seq=++fastBeatSequence;if(!seq){fastFail();return;}Fast::put32(p.bytes+40,seq);
   uint8_t keyCopy[32];portENTER_CRITICAL(&fastLock);memcpy(keyCopy,fastKey,32);portEXIT_CRITICAL(&fastLock);
   if(FastCrypto::mac(keyCopy,"Bid3.FastHeartbeat.v4",p.bytes,64))fastSend(p.bytes,Fast::HEARTBEAT);
@@ -72,7 +72,7 @@ void fastPrepare(const uint8_t proof[199]){
  if(!fastCapable||fastActive.load())return;uint8_t derived[32];if(!FastCrypto::key(fastShared,proof,derived))return;
  fastActive.store(false);fastAdmitted.store(false);fastKeyReady.store(false);xQueueReset(fastInputs);xQueueReset(fastControls);
  portENTER_CRITICAL(&fastLock);memcpy(fastKey,derived,32);memcpy(fastNonce,proof+94,32);portEXIT_CRITICAL(&fastLock);
- fastControlSeq=0;fastSequence=0;fastBeatSequence.store(0);fastInputSequence.store(0);fastWaiting=false;fastVersion.store(Fast::MISSING);fastPhase.store(Fast::PAUSED);fastKeyReady.store(true);
+ fastControlSeq=0;fastSequence=0;fastBeatSequence.store(0);fastInputSequence.store(0);fastParticipationEpoch.store(0);fastWaiting=false;fastVersion.store(Fast::MISSING);fastPhase.store(Fast::PAUSED);fastKeyReady.store(true);
 }
 class FastControlCallbacks:public BLECharacteristicCallbacks{
  void onWrite(BLECharacteristic*c)override{String s=c->getValue();if(s.length()!=Fast::CONTROL||!fastControls)return;
@@ -97,17 +97,20 @@ void fastTick(){
   if(b[6]==Fast::RESYNC){fastAdmitted.store(false);fastResync.store(true);}
   if(b[6]==Fast::ACK&&fastWaiting&&Fast::get32(b+48)==Fast::get32(fastPending.bytes+40)){
    if(fastPending.bytes[6]==Fast::BID)Serial.printf("BID3_LATENCY_JSON={\"tag\":%u,\"seq\":%lu,\"result\":%u,\"edge_to_tag_ack_ms\":%lu}\n",TAG,(unsigned long)Fast::get32(b+48),b[53],(unsigned long)uint32_t(millis()-Fast::get32(fastPending.bytes+48)));
-   if(fastPending.bytes[6]==Fast::JOIN)fastAdmitted.store(b[53]==Fast::ACCEPTED&&digitalRead(SWITCH)==LOW);
+   if(fastPending.bytes[6]==Fast::JOIN)fastAdmitted.store(b[53]==Fast::ACCEPTED&&fastPending.generation==fastParticipationEpoch.load()&&digitalRead(SWITCH)==LOW);
    if(fastPending.bytes[6]==Fast::LEAVE)fastAdmitted.store(false);fastWaiting=false;
   }
  }
  uint32_t now=millis();if(fastActive.load()&&uint32_t(now-fastControlAt.load())>2500){fastFail();server->disconnect(server->getConnId());return;}
  if(!fastActive.load())return;
  if(!fastWaiting&&xQueueReceive(fastInputs,&p,0)==pdTRUE){
-  if(memcmp(p.bytes+8,fastNonce,32))return;if(fastSequence==UINT32_MAX){fastFail();return;}Fast::put32(p.bytes+40,++fastSequence);
+  if(memcmp(p.bytes+8,fastNonce,32))return;
+  if((p.bytes[6]==Fast::BID||p.bytes[6]==Fast::JOIN)&&(p.generation!=fastParticipationEpoch.load()||digitalRead(SWITCH)!=LOW))return; // OFF drops unsent participation work before allocating a sequence.
+  if(fastSequence==UINT32_MAX){fastFail();return;}Fast::put32(p.bytes+40,fastSequence+1);
   uint32_t start=micros();if(!FastCrypto::sign(key,drbg,p.bytes)){fastFail();return;}uint32_t signUs=micros()-start;
+  if((p.bytes[6]==Fast::BID||p.bytes[6]==Fast::JOIN)&&(p.generation!=fastParticipationEpoch.load()||digitalRead(SWITCH)!=LOW))return;
   if(!FastCrypto::mac(fastKey,"Bid3.FastEvent.v4",p.bytes,128)){fastFail();return;}
-  fastPending=p;fastWaiting=true;fastWaitAt=millis();fastSentAt=fastWaitAt;fastSend(p.bytes,Fast::EVENT);
+  ++fastSequence;fastPending=p;fastWaiting=true;fastWaitAt=millis();fastSentAt=fastWaitAt;fastSend(p.bytes,Fast::EVENT);
   Serial.printf("BID3_FAST_SIGN_US=%lu kind=%s\n",(unsigned long)signUs,Fast::kindName(p.bytes[6]));
  }
  now=millis();if(fastWaiting&&uint32_t(now-fastSentAt)>=400){fastSentAt=now;fastSend(fastPending.bytes,Fast::EVENT);}

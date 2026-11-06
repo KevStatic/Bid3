@@ -1,40 +1,42 @@
-# Bid3 V5 Live Input — validation
+# Bid3 V6 OFF/LOST fix — validation
 
-6 November 2026. No board was flashed and no physical RF, acoustic or button-to-pixel measurement was performed by the assistant.
+6 November 2026. No board was flashed and no physical RF, switch-to-pixel or acoustic measurement was performed by the assistant.
 
-## Target builds
+## Successful target builds
 
-All three sketches compiled successfully with the Arduino IDE bundled CLI 1.5.1, Espressif ESP32 core 3.3.12 and default application partitions.
+Arduino CLI 1.5.1, Espressif ESP32 core 3.3.12, default partitions. Both tags use XIAO_ESP32C3 and the gateway uses ESP32 Dev Module.
 
-| Sketch | FQBN | Application bytes / limit | Static globals / RAM |
-|---|---|---:|---:|
-| Gateway | esp32:esp32:esp32 | 1219122 / 1310720 | 47156 / 327680 |
-| Tag01 | esp32:esp32:XIAO_ESP32C3 | 713935 / 1310720 | 20036 / 327680 |
-| Tag02 | esp32:esp32:XIAO_ESP32C3 | 713939 / 1310720 | 20036 / 327680 |
+| Sketch | Application bytes / limit | Static globals / RAM |
+|---|---:|---:|
+| Gateway | 1220478 / 1310720 | 47188 / 327680 |
+| Tag01 | 714145 / 1310720 | 20044 / 327680 |
+| Tag02 | 714149 / 1310720 | 20044 / 327680 |
 
-Static usage excludes dynamic BLE/crypto allocations and task stacks; physical heap/stack margin remains a bench check. Delivered source headers were compared with their compiled copies, ignoring Arduino's injected line directives.
+Static usage excludes BLE/crypto allocations and task stacks. Runtime margin remains a physical check. All 31 delivered sketch headers were compared with the successfully compiled copies, ignoring Arduino's injected line directive.
 
-## Host checks
+## Verification
 
-- Eleven C++ programs passed with C++17, warnings as errors, AddressSanitizer and UndefinedBehaviorSanitizer.
-- New live-input checks: 1,860 checks of packet fields, nonce/boot/tag context, replay/counter windows, session resets, press/release state, two tags, stale work and the actual BUTTON PRESSED renderer. The test also includes Arduino's INPUT macro before the wire header.
-- OLED driver: 78 checks, including urgent frame replacement in the middle of an animation transfer, page0 restart with the new snapshot, initial visibility, switched-power settling and bus recovery.
-- Existing regressions passed: 274 debounce/tracker/wire checks; 103 legacy wire checks; 50,030 runtime checks; 68 audio sequence checks; 38 mocked sound GPIO checks; 1,164 renderer frames; 9,216 radar/startup checks; 50 canonical fast-frame checks; 1,596 LED/sound-envelope checks.
-- 23 firmware Python tests and 2 bridge Python tests passed. These cover supplied public pins, unchanged cryptographic helpers, HKDF agreement, canonical signatures matching the actual engine, signature tampering, serial short-line delivery, session ACK correlation, same-quote contention, full 10-second reset and a leader remaining bound after OFF.
-- Actual engine suite: 31 passed. Arkiv schema drift check: schemas match. Engine, bridge and web runtime files are unchanged by V5.
+- Twelve C++ programs passed with C++17, warnings as errors, AddressSanitizer and UndefinedBehaviorSanitizer.
+- New OFF/LOST program: 981 checks of heartbeat context/flags, tag-uptime order including wrap, delayed JOIN versus newer OFF, both-tag availability, immediate proof-freshness override, OFF/LOST overlays, blocked OFF inputs and healthy-tag input operation; it also exercises 2000 renderer frames.
+- Existing V5 button, radio-wire, signed-frame, input-replay, display, radar, sound and LED-envelope checks all pass unchanged.
+- 23 firmware Python tests and 2 bridge Python tests pass, including canonical signature compatibility and the accepted leader staying bound after OFF.
+- Matching engine suite: 36 tests pass. New cases cover isolated tag loss, refusal of unavailable bidders, continued healthy bidding, admission on recovery, unchanged deadline on tag recovery, accepted unavailable leader eligibility and no fabricated winner without accepted bids. Infrastructure-wide pause and restart tests remain.
+- Arkiv schema drift check reports schemas match. No web or bridge runtime or Arkiv schema change is included.
 
-## What changed for latency
+The V5 fastInputReceipt function is byte-identical. Twelve core input, sound, OLED, feedback, crypto, enrollment and wire helper files are byte-identical to V5, including Sounds.h, SoundOutput.h, Oled.h, Config.h, Crypto.h, FastCrypto.h and ButtonInput.h. Pricing and the signature/canonical-wire format are unchanged.
 
-The button sampler sends the 80-byte session-HMAC receipt directly after debounce. It does not wait for main-loop ECDSA, pending JOIN/BID acknowledgements or sensor work. A dedicated gateway input task verifies session context/MAC before queueing UI; heavyweight gateway ECDSA now runs on the other CPU core. Urgent input frames bypass the animation frame timer and replace a pending OLED snapshot. Release updates cannot erase an accepted/refused outcome; an 80 ms minimum input overlay ensures the initial receipt is visible even if an engine result arrives quickly.
+## Agreed behavior
 
-Without a fresh engine state, JOIN/LEAVE is locally acknowledged RECEIVED, never ACCEPTED. This avoids the old 3-second reconnect cycle while retaining the admission requirement for price bids. Diagnostic button presses do not need individual ECDSA signatures; actual BID intents still do. Advertising requests 50–75 ms; established BLE requests 7.5–15 ms with zero peripheral latency. Missing-sensor retry configuration is deferred while connected.
+Intentional OFF sends authenticated switch state immediately after the existing 50 ms switch debounce, marks that tag OFF and removes its radar presence. It blocks new bids and discards unsent work from before OFF, including rapid OFF/ON cycles. A late old JOIN cannot overwrite a newer OFF observation. Signed LEAVE still reaches the authoritative engine.
 
-These are implementation changes and host checks, not a measured physical latency guarantee. The existing 30 ms stable debounce is intentional. RF contention, actual negotiated BLE intervals, I2C transfer and panel refresh remain nonzero. Measure the assembled hardware before reporting an end-to-end bound.
+A lost connection or missing established-session heartbeat marks only that tag LOST after the existing 1500 ms liveness threshold. It does not retain the legacy 25-second proof availability. The matching engine policy marks that seat UNKNOWN and blocks its new bids while healthy bidders and the running countdown continue. LINK OK alone is insufficient: a fresh JOIN is required. Tag recovery never resets that live deadline. Global bridge/gateway/engine outages retain the existing whole-room pause/recovery policy.
 
-## Preservation and compatibility
+Already accepted bids remain binding after OFF or a tag fault and can still win. In-flight bids use the engine's recorded decision; the firmware does not erase a committed bid or invent a new bid on recovery. No accepted bid means no automatic winner.
 
-Original advertisement format, identity/proof service, enrollment pins and NVS namespaces remain. Tag LEDs stay static; original startup melody and complete radar ring remain. Original working archive SHA256 is recorded in legacy_docs/README.md. Nine unchanged baseline security/wire/button/output helper hashes still match. Oled.h intentionally adds urgent frame replacement, so its original baseline hash is retained only for provenance; its behavior is checked by the expanded OLED regression.
+## Run checks and deploy
 
-All three boards need matching V5 sketches for the input receipt. V4 bridge compatibility is preserved by retaining build=V4_WORKING_BASE in the status contract and adding firmware=V5_LIVE_INPUT. No backend migration is required for the new OLED feature. Existing engine v1 signatures remain limited to one active lot with pending work drained before changing lots; they do not supply cross-round replay protection.
+Run tools/check.py with the host test dependencies installed. Engine-dependent checks use the sibling engine directory or BID3_ENGINE_PATH. Standalone archives skip those cases unless the actual engine is supplied.
 
-Run `python tools/check.py` with firmware/requirements-dev.txt installed. Engine-dependent host cases require the actual sibling engine/ or BID3_ENGINE_PATH; standalone archives skip those cases when it is absent. Physical acceptance remains: both buttons, simultaneous presses, held/released display, repeated offline use without reconnects, actual signed bidding, OFF/ON, link-loss recovery and real OLED/light/buzzer timing.
+Upload all three V6 sketches, use 115200 baud and preserve NVS with Erase All Flash disabled. Deploy the matching engine/ code for the per-bidder fault policy; older engines still pause the room on tag loss. The standalone archive also includes a patch, replacement engine source and tests for older checkouts. Publishing the source does not deploy the cloud engine or flash a device.
+
+Physical acceptance remains: both tags OFF separately and together, OFF/ON while a bid is queued/signing, loss of one tag while the other bids, fresh admission after reconnect, countdown continuity, accepted OFF/LOST leader eligibility and gateway-wide failure pause. Software checks do not establish a physical latency bound.
