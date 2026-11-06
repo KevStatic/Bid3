@@ -2,7 +2,7 @@
 
 A live auction platform with physical BLE bidder tags, an authoritative auction engine and public Arkiv records.
 
-This `firmware` branch contains **V6** for the Gateway, Tag01 and Tag02, together with its matching engine policy and regression tests.
+This release contains **V6** for the Gateway, Tag01 and Tag02, together with its matching engine policy and regression tests.
 
 ## Start here
 

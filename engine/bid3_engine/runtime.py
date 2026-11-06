@@ -93,10 +93,16 @@ class Runtime:
             return auction
 
     async def open(self, auction_id: str) -> Outcome:
-        out = await self.apply(auction_id, lambda a, now: a.open(now))
-        if out.changed:
-            self.active_auction_id = auction_id
-        return out
+        def open_and_activate(auction: Auction, now: int) -> Outcome:
+            out = auction.open(now)
+            if out.changed:
+                # Become the active auction inside apply(), before it broadcasts: _broadcast only sends the
+                # bridge the active auction's state, and that new auctionId is what makes the bridge send
+                # CMD=STATUS so the tags re-JOIN this lot.
+                self.active_auction_id = auction.auction_id
+            return out
+
+        return await self.apply(auction_id, open_and_activate)
 
     async def pause(self, auction_id: str, reason: str) -> Outcome:
         return await self.apply(auction_id, lambda a, now: a.pause(now, reason), allow_auto_resume=False)

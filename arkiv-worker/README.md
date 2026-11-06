@@ -18,7 +18,7 @@ npm start                   # runs dry (writes nothing) until ARKIV_PRIVATE_KEY 
 2. Fund the address at https://hub.arkiv.network/faucet and get an access key at https://hub.arkiv.network/access-keys.
 3. Set the following, then `npm start`:
    - `ARKIV_PRIVATE_KEY` and `ARKIV_ACCESS_KEY`
-   - `ENGINE_URL` (e.g. `http://localhost:8000`)
+   - `ENGINE_URL` (e.g. `http://localhost:8010`)
    - `WORKER_TOKEN` (same as the engine's)
 4. Put the logged publisher address in the web app's `NEXT_PUBLIC_PUBLISHER_ADDRESS`, so the results page can verify the issuer.
 5. Optional: `npm run seed-listings` writes the demo lot to Arkiv so the catalogue has a live entry.

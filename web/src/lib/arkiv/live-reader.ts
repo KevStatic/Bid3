@@ -4,6 +4,7 @@ import { asc, desc, eq, gte, lte } from "@arkiv-network/sdk/query";
 import { str, u64 } from "@arkiv-network/sdk/schema";
 import { http } from "viem";
 import { config } from "../config";
+import { pickListing } from "./pick-listing";
 import { AuctionBid, AuctionDefinition, AuctionResult, AuctionSnapshot, ItemListing } from "./schemas";
 import { sortListings } from "./sort";
 import type { ArkivReader, BidRecord, Definition, Listing, ListingFilter, ListingStatus, Result, ResultStatus, Snapshot } from "./types";
@@ -54,6 +55,9 @@ function toListing(e: ListingRow): Listing {
   };
 }
 
+/** Only the Bid3 publisher wallet may write rules, bids, snapshots and results; ignore look-alikes from other wallets. */
+const PUBLISHER = config.publisherAddress as `0x${string}`;
+
 export class LiveArkivReader implements ArkivReader {
   readonly mode = "live" as const;
   private readonly client = createPublicClient({
@@ -73,15 +77,21 @@ export class LiveArkivReader implements ArkivReader {
   }
 
   async getListingByAuction(auctionId: string): Promise<Listing | null> {
-    const page = await this.client.select().from(ItemListing).where(eq("auctionId", str(auctionId))).limit(1).fetch();
-    const row = page.entities[0];
-    return row ? toListing(row) : null;
+    // Any wallet can write a listing with this auctionId, so fetch every candidate and let the
+    // publisher's definition (which names the listingId) and pickListing's rules choose.
+    const [page, definition] = await Promise.all([
+      this.client.select().from(ItemListing).where(eq("auctionId", str(auctionId))).limit(50).fetch(),
+      this.getDefinition(auctionId),
+    ]);
+    const candidates = page.entities.map((e) => ({ listing: toListing(e), createdAtBlock: e.$createdAt }));
+    return pickListing(candidates, PUBLISHER, definition?.listingId);
   }
 
   async getDefinition(auctionId: string): Promise<Definition | null> {
     const page = await this.client
       .select()
       .from(AuctionDefinition)
+      .ownedBy(PUBLISHER)
       .where(eq("auctionId", str(auctionId)))
       .orderBy(desc("epoch"))
       .limit(1)
@@ -108,6 +118,7 @@ export class LiveArkivReader implements ArkivReader {
     const page = await this.client
       .select()
       .from(AuctionBid)
+      .ownedBy(PUBLISHER)
       .where(eq("auctionId", str(auctionId)))
       .orderBy(desc("bidIndex"))
       .limit(100)
@@ -126,7 +137,7 @@ export class LiveArkivReader implements ArkivReader {
   }
 
   async listResults(): Promise<Result[]> {
-    const page = await this.client.select().from(AuctionResult).orderBy(desc("closedAtMs")).limit(100).fetch();
+    const page = await this.client.select().from(AuctionResult).ownedBy(PUBLISHER).orderBy(desc("closedAtMs")).limit(100).fetch();
     return page.entities.map((e) => ({
       key: e.$key,
       owner: lower(e.$owner),
@@ -149,6 +160,7 @@ export class LiveArkivReader implements ArkivReader {
     const page = await this.client
       .select()
       .from(AuctionSnapshot)
+      .ownedBy(PUBLISHER)
       .where(eq("auctionId", str(auctionId)))
       .orderBy(desc("serverSeq"))
       .limit(1)

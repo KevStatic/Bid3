@@ -94,6 +94,9 @@ def create_app(settings: Settings | None = None, runtime: Runtime | None = None)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        missing = [n for n, v in (("BRIDGE_TOKEN", settings.bridge_token), ("ADMIN_TOKEN", settings.admin_token), ("WORKER_TOKEN", settings.worker_token)) if not v]
+        if missing and settings.require_tokens:
+            raise RuntimeError(f"refusing to start: {', '.join(missing)} not set (set REQUIRE_TOKENS=0 to override for local use)")
         await runtime.start()
         if settings.seed_demo and "bid3-003" not in runtime.auctions:
             await _seed_demo(runtime, settings)

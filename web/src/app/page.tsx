@@ -1,7 +1,6 @@
 import { TagIllustration } from "@/components/tag-illustration";
 import { ButtonLink, Container } from "@/components/ui";
-import { config } from "@/lib/config";
-import { LiveLotCard } from "./live-lot-card";
+import { FeaturedLotCard, FeaturedRoomButton } from "./featured-live";
 import { RecentResults } from "./recent-results";
 
 const STEPS = [
@@ -45,15 +44,13 @@ export default function Home() {
               check the result without asking us.
             </p>
             <div className="mt-8 flex flex-wrap gap-3">
-              <ButtonLink href={`/room/${config.featuredAuctionId}`} size="lg">
-                Watch the live room
-              </ButtonLink>
+              <FeaturedRoomButton />
               <ButtonLink href="/catalogue" variant="outline" size="lg">
                 Browse lots
               </ButtonLink>
             </div>
           </div>
-          <LiveLotCard auctionId={config.featuredAuctionId} />
+          <FeaturedLotCard />
         </div>
       </Container>
 

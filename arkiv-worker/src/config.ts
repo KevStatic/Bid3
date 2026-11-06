@@ -2,7 +2,7 @@ import { isHex, type Hex } from "viem";
 
 /** Worker settings, from environment variables. */
 export const config = {
-  engineUrl: (process.env.ENGINE_URL ?? "http://localhost:8000").replace(/\/+$/, ""),
+  engineUrl: (process.env.ENGINE_URL ?? "http://localhost:8010").replace(/\/+$/, ""),
   workerToken: process.env.WORKER_TOKEN ?? "",
   /** The Bid3 publisher wallet's private key. Without it the worker runs dry and writes nothing. */
   privateKey: process.env.ARKIV_PRIVATE_KEY && isHex(process.env.ARKIV_PRIVATE_KEY) ? (process.env.ARKIV_PRIVATE_KEY as Hex) : undefined,

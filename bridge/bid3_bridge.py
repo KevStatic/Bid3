@@ -308,7 +308,7 @@ async def run(engine_url: str, token: str, gateway: Gateway | KeyboardGateway, i
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Bid3 bridge: gateway serial <-> engine")
-    parser.add_argument("--engine", default=os.environ.get("ENGINE_URL", "ws://localhost:8000"), help="engine WebSocket base URL (ws:// or wss://)")
+    parser.add_argument("--engine", default=os.environ.get("ENGINE_URL", "ws://localhost:8010"), help="engine WebSocket base URL (ws:// or wss://)")
     parser.add_argument("--token", default=os.environ.get("BRIDGE_TOKEN", ""), help="engine BRIDGE_TOKEN")
     parser.add_argument("--port", default=os.environ.get("SERIAL_PORT"), help="gateway serial port, e.g. /dev/cu.usbserial-0001")
     parser.add_argument("--baud", type=int, default=int(os.environ.get("SERIAL_BAUD", "115200")))

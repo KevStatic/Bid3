@@ -8,13 +8,13 @@ The single authority for every auction: it orders paddle presses, prices bids, r
 cd engine
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements-dev.txt
-python -m bid3_engine              # http://localhost:8000
-python -m pytest -q                # 31 tests
+python -m bid3_engine              # http://localhost:8010
+python -m pytest -q                # 39 tests
 ```
 
 On first start it seeds and opens the demo auction `bid3-003`, with paddles `TAG1 → K7` and `TAG2 → M4` (change with `SEED_TAGS`). Settings are in `.env.example`.
 
-Point the web app at it with `NEXT_PUBLIC_ENGINE_WS_URL=ws://localhost:8000` (and `NEXT_PUBLIC_ENGINE_HTTP_URL=http://localhost:8000`).
+Point the web app at it with `NEXT_PUBLIC_ENGINE_WS_URL=ws://localhost:8010` (and `NEXT_PUBLIC_ENGINE_HTTP_URL=http://localhost:8010`).
 
 ## How it decides
 
@@ -58,15 +58,15 @@ node --experimental-strip-types engine/scripts/make_vectors.mjs   # from the rep
 Create a new lot:
 
 ```bash
-curl -X POST localhost:8000/auctions -H "Authorization: Bearer $ADMIN_TOKEN" -H 'content-type: application/json' -d '{
+curl -X POST localhost:8010/auctions -H "Authorization: Bearer $ADMIN_TOKEN" -H 'content-type: application/json' -d '{
   "auctionId": "bid3-010", "listingId": "lot-010", "category": "Electronics",
   "rules": {"startPriceMinor": 5000, "stepBps": 500, "countdownMs": 5000, "ceilingMinor": 50000, "timeLimitMs": 600000},
   "seats": [{"tagRef": "TAG1", "alias": "Q2"}, {"tagRef": "TAG2", "alias": "V9"}]
 }'
-curl -X POST localhost:8000/auctions/bid3-010/open -H "Authorization: Bearer $ADMIN_TOKEN"
+curl -X POST localhost:8010/auctions/bid3-010/open -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
 
-The most recently opened auction is the one the gateway's presses go to.
+The most recently opened auction is the one the gateway's presses go to. Opening it immediately sends the connected bridge the new lot's state (with its `auctionId`). Paddles then need to JOIN the new lot: the `firmware`-branch bridge sends `CMD=STATUS` for that automatically. With the bridge on `main`, switch each paddle off and on (or type `join TAG1` in `--keyboard` mode).
 
 ## What goes to Arkiv
 
@@ -82,9 +82,12 @@ The worker drains this; the live round never waits on it.
 ## Deploy (Railway)
 
 1. New service from the repo, root directory `engine`; it builds from the `Dockerfile`.
-2. Attach a volume at `/data`.
-3. Set `BRIDGE_TOKEN`, `ADMIN_TOKEN`, `WORKER_TOKEN` (random) and `CORS_ORIGINS=https://<your-vercel-domain>`.
-4. Keep it to **one instance**: the engine must be the only authority.
+2. Attach a volume at `/data` (the Dockerfile has no `VOLUME` line because Railway rejects it).
+3. Set `BRIDGE_TOKEN`, `ADMIN_TOKEN`, `WORKER_TOKEN` (random) and `CORS_ORIGINS=https://<your-vercel-domain>`. On Railway the engine refuses to start if any token is empty; on another public host set `REQUIRE_TOKENS=1` to get the same check.
+4. Set `SEED_DEMO=0`, then create and open a fresh lot with the curl commands above shortly before the demo. A seeded lot that nobody joins closes as UNSOLD after its 10-minute limit and stays closed on the volume.
+5. Keep it to **one instance**: the engine must be the only authority.
+
+The bridge token travels in the WebSocket URL; the engine redacts it (`token=***`) from uvicorn's logs.
 
 ## Signatures
 
