@@ -1,14 +1,44 @@
 # Bid3
 
-**A live auction you bid in by pressing a physical paddle, with every listing, bid and hammer price on Arkiv, so anyone can check the result without trusting us.**
+> A physical live auction where every accepted bid and the hammer result can be verified without trusting the auction organiser.
 
-Built at ETHGlobal Mumbai (November 2026).
+[Live app](https://bid3.vercel.app) · [Arkiv explorer](https://rabdi.explorer.arkiv.network) · [MIT license](LICENSE)
 
-| | |
+Bid3 brings the theatre of a live auction to verifiable public infrastructure. Bidders use handheld ESP32 paddles—switch on to enter, press once to bid—while a projector shows the price, leader and hammer countdown. The fast bid loop stays local; the rules, accepted bids and final result are published as Arkiv entities that anyone can query and check independently.
+
+Built from scratch at **ETHGlobal Mumbai, 5–7 November 2026**.
+
+## The product
+
+Live auctions are exciting, but their audit trail is usually a private database or the auctioneer's word. Putting the bid loop directly onchain would make a room wait for transaction confirmation. Bid3 separates those concerns:
+
+- **Physical and immediate:** no bidder app or wallet; a paddle press is the interface.
+- **Deterministic:** each accepted bid moves exactly 5% up a reproducible integer price ladder.
+- **Safe under failure:** one lost paddle is isolated; gateway, bridge or engine failure pauses the room.
+- **Publicly verifiable:** the browser rebuilds the ladder and transcript from Arkiv, without calling the Bid3 engine.
+- **Privacy-conscious:** public records use fresh per-round aliases such as `K7` and `M4`, never stable device IDs.
+
+Bid3 is aimed at charity galas, community fundraisers, college festivals, conferences and collector events that want physical bidding with a result donors, sellers and losing bidders can inspect afterward.
+
+## Demo
+
+| Resource | Link |
 |---|---|
-| Live app | **TODO (Kev):** Vercel URL |
-| Demo video (≤ 3 min) | **TODO (Kev):** link |
-| Arkiv track | Build on Arkiv (from scratch) |
+| Product | [bid3.vercel.app](https://bid3.vercel.app) |
+| Verified results | [Results explorer](https://bid3.vercel.app/explorer) |
+| Lots | [Arkiv-backed catalogue](https://bid3.vercel.app/catalogue) |
+| Demo video | Add the ETHGlobal submission video link here (maximum 3 minutes for the EF CROPS track) |
+
+The live room needs the event laptop's engine and Cloudflare tunnel to be online. The catalogue, bid history and results explorer read Arkiv directly and remain independently queryable when that engine is offline. With no backend configuration, a local web build runs a clearly labelled simulation and sample data.
+
+### A real hardware round
+
+`bid3-004` ran end to end with two physical paddles and the gateway. It accepted 11 alternating bids from `100.00` to `162.89`, sold to paddle `M4`, and was read back from Arkiv with the same rules, ladder, transcript and winner.
+
+- Result entity: [`0x6d84…1222`](https://rabdi.explorer.arkiv.network/entity/0x6d84cd90e2d8fc7a8946676f247ebf17660c9e77d54843107b0d77608c421222)
+- Publisher: `0xCf11CEa33b48A48901DD2a03730524a69E64e32d`
+- Full round cost: `0.00444 tGLM` on the Rabdi testnet
+- Prices are **demo credits**. Bid3 does not move ETH, tokens or real money.
 
 ## How a round works
 
@@ -18,142 +48,194 @@ Built at ETHGlobal Mumbai (November 2026).
 4. If **one paddle** loses signal, only that bidder is blocked (its display shows LOST). Everyone else, and the countdown, carry on. To come back, the paddle re-authenticates and joins again, without restarting the countdown. If the **gateway, bridge or engine** drops out, the whole room **pauses** and nothing is sold until it recovers.
 5. The rules, every accepted bid and the result are written to Arkiv. The [results page](web/src/app/explorer/explorer-view.tsx) re-checks each result in your browser, reading only from Arkiv: issuer wallet, rules hash, bid count, every bid's price, and a hash of the full bid transcript.
 
-Payment is simulated (demo credits).
-
-## Arkiv
-
-**Wallets that wrote our entities** (Rabdi testnet, chain ID 7794095):
-
-| Role | Address | Writes |
-|---|---|---|
-| Bid3 publisher | **TODO (Kev):** `0x…` (printed by the worker on start) | `AuctionDefinition`, `AuctionBid`, `AuctionSnapshot`, `AuctionResult` |
-| Demo seller | **TODO (Kev):** `0x…` | `ItemListing` (each seller writes from their own wallet) |
-
-**A query you can run.** It reads our results straight from Arkiv, needs no key and doesn't touch our servers:
-
-```bash
-cd arkiv-worker && npm install
-npm run query-results -- <publisher address>
-```
-
-That runs ([`arkiv-worker/src/query-results.ts`](arkiv-worker/src/query-results.ts)):
-
-```ts
-client.select().from(AuctionResult).ownedBy(publisher).orderBy(desc("closedAtMs")).limit(20).fetch()
-```
-
-The Lots, Bid history and Results pages each show the exact query behind them, with a copy button.
-
-**Write-ups for judges:**
-- [`arkiv/schema.md`](arkiv/schema.md): entities, the fields we query, owners and expiry
-- [`arkiv/how-you-use-arkiv.md`](arkiv/how-you-use-arkiv.md): why each filter, owner and expiry fits the app, and what users see
-- [`arkiv/why-arkiv.md`](arkiv/why-arkiv.md): what users would lose with Postgres, and what we kept off Arkiv
-- [`arkiv/reach.md`](arkiv/reach.md): who it's for and how to try it
-- [`arkiv/friction.md`](arkiv/friction.md): our feedback
-
 ## Architecture
 
-```
-ESP32 tags ──radio──▶ Gateway ──USB serial──▶ bridge (laptop) ──WebSocket──▶ engine (FastAPI)
-                                                                               │        │
-                          browsers ◀── live stream (WebSocket) ────────────────┘        │ outbox
-                              ▲                                                         ▼
-                              └──────── reads (no Bid3 server involved) ◀── Arkiv ◀── worker
+```text
+ESP32 paddles ──BLE──▶ gateway ──USB serial──▶ bridge ──WebSocket──▶ engine
+                                                                        │
+                                                       SQLite + outbox  │
+                                                                        ▼
+browser ◀──── live WebSocket ─────────────────────────────────────── engine
+   │
+   └──── public reads, no Bid3 server ──▶ Arkiv ◀──── publisher worker
 ```
 
-| Folder | What it is |
+| Component | Responsibility |
 |---|---|
-| [`engine/`](engine/) | The only authority on order, price, countdown and winner. Python/FastAPI with a SQLite journal. Queues Arkiv records in an outbox, so the room never waits on the chain. |
-| [`bridge/`](bridge/) | Runs on the laptop the gateway is plugged into: USB serial ↔ engine WebSocket. Has a `--keyboard` mode and a fake gateway for testing without hardware. |
-| [`arkiv-worker/`](arkiv-worker/) | Drains the engine's outbox into Arkiv entities with the publisher wallet. |
-| [`web/`](web/) | Next.js app: live room, lots, bid history, results explorer, seller flow, NFC seat page. Reads Arkiv directly in the browser. |
-| [`arkiv/`](arkiv/) | The Arkiv write-ups above. |
-| [`firmware/`](firmware/) | Arduino C++ (V6) for the two paddles (`Tag01/`, `Tag02/`) and the gateway (`Gateway/`), with host checks in `tools/`. See [Hardware and firmware](#hardware-and-firmware). |
+| [`firmware/`](firmware/) | V6 Arduino firmware for two Seeed XIAO ESP32-C3 paddles and an ESP32-WROOM gateway; signed intents, display, LEDs and sound. |
+| [`bridge/`](bridge/) | USB serial ↔ engine WebSocket adapter. Refuses offline presses instead of replaying them later. Includes keyboard and fake-gateway modes. |
+| [`engine/`](engine/) | The single authority for order, pricing, countdown and winner. FastAPI state machine with a SQLite journal and transactional Arkiv outbox. |
+| [`arkiv-worker/`](arkiv-worker/) | Publishes frozen definitions, accepted bids, snapshots and results from the outbox to Arkiv. The auction never waits on a chain write. |
+| [`web/`](web/) | Next.js 16 product: live room, catalogue, bid history, result verification, seller flow and NFC seat page. |
+| [`arkiv/`](arkiv/) | Schema, judging answers and integration feedback required by the Arkiv track. |
 
-Exact pricing, the rules hash and the transcript digest are implemented in TypeScript and in Python. The engine tests check the Python against vectors generated from the TypeScript (`cd engine && python -m pytest`).
+The price formula, canonical rules hash and transcript digest are implemented independently in TypeScript and Python. Shared test vectors catch drift between the browser and engine.
 
-## Run it locally
+## Arkiv submission
 
-Defaults use port **8010** for the engine.
+**Track:** [Build on Arkiv (from scratch)](https://ethglobal.com/events/mumbai/prizes)
+
+Arkiv is product infrastructure here, not an attached log. Sellers own their listing entities. The catalogue, bid history and results explorer query Arkiv directly. If the Bid3 engine disappears, anyone can still retrieve the public auction record and run the verification logic.
+
+### Writer wallet and live data
+
+The Bid3 publisher and seeded demo seller wallet is:
+
+```text
+0xCf11CEa33b48A48901DD2a03730524a69E64e32d
+```
+
+At the time of this README audit it owned four live `AuctionResult` entities: `bid3-004` through `bid3-007`. The public query returned two 11-bid hardware results plus later 4- and 5-bid results.
+
+Run the same query without a Bid3 server or private key:
 
 ```bash
-# engine: seeds and opens demo auction bid3-003 (paddles TAG1→K7, TAG2→M4)
-cd engine && pip install -r requirements-dev.txt && python -m bid3_engine
-
-# bridge: real gateway, or --keyboard to type "join TAG1", "bid TAG2"
-cd bridge && pip install -r requirements.txt
-python bid3_bridge.py --port /dev/cu.usbserial-XXXX     # or --keyboard
-
-# web: live mode against the local engine (http://localhost:3000)
-cd web && echo "NEXT_PUBLIC_ENGINE_WS_URL=ws://localhost:8010" > .env.local && npm install && npm run dev
-
-# Arkiv worker: writes nothing until ARKIV_PRIVATE_KEY is set (see arkiv-worker/README.md)
-cd arkiv-worker && npm install && npm start
+cd arkiv-worker
+npm install
+npm run query-results -- 0xCf11CEa33b48A48901DD2a03730524a69E64e32d
 ```
 
-With no environment set, the web app runs a labelled in-browser simulation and bundled sample Arkiv data. Every page shows which source it's using: Live, Simulation, From Arkiv or Sample data.
+The script executes the equivalent of:
 
-## Hardware and firmware
-
-Two Seeed XIAO ESP32-C3 paddles and an ESP32-WROOM gateway, running firmware **V6**.
-
-- [Firmware upload guide](firmware/START_HERE.md): wiring, board selection and all three sketches
-- [Firmware overview](firmware/README.md): hardware targets, pinned build commands and source layout
-- [Integration brief](firmware/INTEGRATION_BRIEF.md): gateway → USB bridge → engine
-- [Bidding rules](firmware/BIDDING_RULES.md) and [validation results](firmware/VALIDATION.md)
-
-Build with Espressif ESP32 core **3.3.12**, Arduino CLI **1.5.1**, **115200 baud** on all three boards. Keep the headers beside each sketch, and leave **Erase All Flash disabled** so enrolled identities survive.
-
-The V6 engine policy (one faulty paddle is isolated, not the whole room) lives in `engine/bid3_engine/auction.py`. Deploy the engine from this repo: flashing the firmware alone doesn't update a cloud engine.
-
-**Checks**, from the repository root:
-
-```sh
-python3 -m venv firmware/.venv
-firmware/.venv/bin/python -m pip install -r firmware/requirements-dev.txt
-firmware/.venv/bin/python firmware/tools/check.py
-PYTHONPATH=engine firmware/.venv/bin/python -m pytest engine/tests -q
-node arkiv-worker/scripts/check-schemas.mjs
+```ts
+client
+  .select()
+  .from(AuctionResult)
+  .ownedBy(publisher)
+  .orderBy(desc("closedAtMs"))
+  .limit(20)
+  .fetch();
 ```
 
-[GitHub Actions](https://github.com/KevStatic/Bid3/actions/workflows/firmware.yml) runs the firmware host checks, the engine tests and all three board builds. Compiling and host tests don't replace physical RF, timing and hardware checks.
+### What lives on Arkiv
 
-## What we built at Mumbai, and what we reused
+| Entity | Owner | Lifetime | User-visible purpose |
+|---|---|---:|---|
+| `ItemListing` | Seller wallet | close + 24 h | Catalogue and lot details |
+| `AuctionDefinition` | Publisher | 30 days | Frozen rules used by browser verification |
+| `AuctionBid` | Publisher | 7 days | Ordered accepted-bid history |
+| `AuctionSnapshot` | Publisher | 10 minutes | Public fallback while the live stream is unavailable |
+| `AuctionResult` | Publisher | 90 days, permissionlessly extendable | Winner, hammer price and verification anchor |
 
-All code in this repo was written at ETHGlobal Mumbai, including the paddle and gateway firmware. We reused only public libraries, one open-licensed font, and off-the-shelf hardware.
+Rules, bids and results are `readonly`, but Arkiv still permits their owner to delete them. Bid3 states that limitation rather than describing the records as permanent: deletion becomes visible as missing evidence, while an in-place edit is prevented.
 
-| Built at ETHGlobal Mumbai | Reused (public, not project-specific) |
-|---|---|
-| The auction engine, the bridge and its serial protocol, the web app | Libraries: Next.js, React, FastAPI, the Arkiv SDK, viem, wagmi and the rest of each `package.json` / `requirements.txt` |
-| Everything Arkiv: schemas, worker, every read in the web app, the browser checks | Firmware platform: Arduino with the Espressif ESP32 core (BLE, mbedTLS, FreeRTOS, Wire, Preferences) |
-| Paddle and gateway firmware (`firmware` branch): radio protocol, signed button presses, auction display and sounds | Font: Adafruit GFX classic 5×7 font, BSD licence (`firmware/FONT_LICENSE.txt`) |
-| | Hardware: Seeed XIAO ESP32-C3 boards (paddles) and an ESP32-WROOM board (gateway) |
+Judge documentation:
 
-> **TODO (Kev): confirm with whoever wrote the firmware, then replace this box with one line.**
-> - Some firmware files read like older work: `BagTrailTag.h` ("original identity/NVS and legacy proof v1 retained"), `LEGACY_TAG_PROTOCOL.md` ("BagTrail … protocol v1"), and `firmware/README.md` ("reuses the original owner-tested BLE advertisement format").
-> - If that BagTrail code was written here before we pivoted to auctions (the log says BagTrail was dropped in Friday's 01:30–03:15 planning), add: *"BagTrail was our first idea at this event; the paddle firmware started as its BLE tag, which is why some files say BagTrail or legacy."*
-> - If any of it existed before the event, this section must say so instead (ETHGlobal rules: undisclosed prior work can disqualify).
+- [Schema, indexed fields, owners and expiration](arkiv/schema.md)
+- [How Arkiv features change the product](arkiv/how-you-use-arkiv.md)
+- [Why users would lose this verification model with Postgres](arkiv/why-arkiv.md)
+- [Reach and intended users](arkiv/reach.md)
+- [Integration friction and reproducible feedback](arkiv/friction.md)
 
-**Commit history.** The first commits are large: the web app (09:02), the backend (09:53) and the firmware (10:42), all on Fri 6 Nov. Each was built in the hours before it was committed. [`PROJECT_LOG.md`](PROJECT_LOG.md) records when each piece was planned and built, and later work is committed in smaller steps.
+## CROPS
 
-## Measured latency
+**Ethereum Foundation track:** [Best CROPS App: Censorship Resistant, Open Source, Private, Secure](https://ethglobal.com/events/mumbai/prizes)
 
-> **TODO (Kev):** press-to-acknowledgement on real hardware (median and worst of N presses), and the countdown length we settled on.
+### C — Censorship resistant
 
-## How we used AI
+The live auction still depends on one Bid3 engine, the event laptop and its network path; if any of those refuse service or disappear, bidding stops safely rather than pretending to continue. The durable part is independent: listings, accepted bids, rules and results are public Arkiv entities, and the explorer/query script works without the Bid3 server or domain. The frontend is currently hosted on one Vercel domain, so a fully redundant or content-addressed frontend remains future work.
 
-> **TODO (Kev): check this is accurate before submitting.** ETHGlobal's Mumbai rules:
-> - AI must "assist your development process, not … create the entire project".
-> - Document "where and how AI tools were used".
-> - For spec-driven work, "include all spec files, prompts, and planning artifacts" in the repo.
->
-> The planning docs `PROJECT_LOG.md` refers to (`Bid3_Architecture_v2…`, `Bid3_Quick_Brief_v2…`, `understanding.md`) aren't in the repo. Their folder, `EthGlobal/Plans/`, is empty on this machine. Find them and add them, for example under `docs/plans/`.
+### O — Open source
 
-We used Claude (Anthropic) as a coding assistant throughout:
-- It wrote most of the code in `web/`, `engine/`, `bridge/` and `arkiv-worker/`, and drafted these docs, from plans and decisions the team made.
-- Each AI-made change is recorded in [`PROJECT_LOG.md`](PROJECT_LOG.md).
-- The team designed the product and the hardware, made the rules decisions, ran and tested every round, and reviewed and committed all code. AI tools never committed.
-- **TODO (Kev):** say whether AI was used for the firmware.
+The full web, engine, bridge, worker and firmware source is available in this repository under the [MIT license](LICENSE). A user can build and run the system from the repository alone with public dependencies; physical mode additionally needs the listed off-the-shelf ESP32 boards. Exact setup commands are below and component-specific details live in each folder's README.
+
+### P — Private
+
+Bid3 has no third-party analytics or client trackers. Arkiv records are intentionally public and reveal the lot, price, timestamps and fresh per-round paddle alias. They do **not** contain a person's name, wallet, stable paddle identifier or radio device ID. The engine and bridge do see the enrolled device reference, and infrastructure providers can observe normal network metadata such as IP addresses and RPC queries. A seller who publishes from a wallet publicly links that wallet to the listing.
+
+### S — Secure
+
+Paddle JOIN, LEAVE and BID intents are signed with enrolled secp256k1 keys and verified by the engine when `INTENT_SIGNATURES_REQUIRED=1`. Private keys remain in device storage or server environments; the publisher key never belongs in a `NEXT_PUBLIC_*` variable. Separate bridge, worker and admin tokens protect control paths, accepted intents are journalled, and browser verification detects rule or transcript mismatch. Current trust limits: the engine is the live authority, the publisher can delete its Arkiv entities, and the V1 paddle signature does not bind `auctionId` or `epoch`, so operators must run one active lot and drain pending intents before switching rounds.
+
+The lead CROPS property is **censorship-resistant access to the completed auction record**: turning off the Bid3 backend removes live bidding but not the ability to retrieve and verify already-published outcomes. No Anon-RPC or EIP-8141 alternative-mempool integration is claimed.
+
+## Run locally
+
+### Software-only demo
+
+```bash
+cd web
+npm install
+npm run dev
+```
+
+Open `http://localhost:3000`. With no environment file, the UI explicitly labels its auction as **Simulation** and its Arkiv records as **Sample data**.
+
+### Full stack
+
+```bash
+# terminal 1 — engine, http://localhost:8010
+cd engine
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements-dev.txt
+python -m bid3_engine
+
+# terminal 2 — bridge (use --keyboard when no hardware is attached)
+cd bridge
+pip install -r requirements.txt
+python bid3_bridge.py --keyboard --engine ws://localhost:8010
+
+# terminal 3 — web
+cd web
+npm install
+NEXT_PUBLIC_ENGINE_WS_URL=ws://localhost:8010 npm run dev
+
+# terminal 4 — Arkiv publisher; dry-run unless ARKIV_PRIVATE_KEY is configured
+cd arkiv-worker
+npm install
+ENGINE_URL=http://localhost:8010 npm start
+```
+
+Windows PowerShell users can set environment variables with `$env:NAME="value"` before running the command. For physical hardware, flashing instructions, pinned toolchain versions and wiring are in [`firmware/START_HERE.md`](firmware/START_HERE.md).
+
+### Checks
+
+```bash
+cd engine && python -m pytest
+cd ../arkiv-worker && npm run typecheck && npm run check-schemas
+cd ../web && npm run lint && npx tsc --noEmit
+```
+
+Firmware validation and three-board build commands are documented in [`firmware/VALIDATION.md`](firmware/VALIDATION.md).
+
+## Hackathon disclosure
+
+### Built at ETHGlobal Mumbai
+
+The team's declaration is that Bid3 was started and built during ETHGlobal Mumbai, including:
+
+- the physical auction concept and rules;
+- the Next.js product and browser-side verification;
+- the Python engine, SQLite journal and outbox;
+- the serial/WebSocket bridge and test harnesses;
+- the Arkiv schemas, writer, queries and judging documentation;
+- the paddle and gateway auction firmware.
+
+The firmware retains names such as `BagTrail` and `legacy` because BagTrail was the team's first concept during this event before it pivoted to auctions. They describe internal lineage within the hackathon project, not a separately submitted product. If any project-specific firmware is later found to predate the event, the team must correct this disclosure and notify ETHGlobal before judging.
+
+### Reused public work
+
+- Open-source dependencies declared in `package.json` and `requirements*.txt`, including Next.js, React, FastAPI, Arkiv SDK, viem and wagmi.
+- Arduino and Espressif ESP32 core libraries: BLE, mbedTLS, FreeRTOS, Wire and Preferences.
+- Adafruit GFX classic 5×7 font under its BSD license ([attribution](firmware/FONT_LICENSE.txt)).
+- Off-the-shelf Seeed XIAO ESP32-C3 paddles and ESP32-WROOM gateway hardware.
+
+No pre-existing project-specific code, design or asset is intentionally claimed as part of this from-scratch submission.
+
+### AI use
+
+Claude and Codex were used as coding and documentation assistants across the web app, engine, bridge, Arkiv worker, firmware tests and project documentation. The human team selected the product, architecture and auction rules; supplied and tested the hardware; evaluated failures; reviewed the output; and controlled what was merged and submitted. AI assistance and significant decisions are recorded chronologically in [`PROJECT_LOG.md`](PROJECT_LOG.md). AI-generated voiceover is not used in the demo video.
+
+## Current limitations
+
+- Payments are simulated; Bid3 provides auction evidence, not escrow or settlement.
+- The live round has one central engine and supports one active lot at a time.
+- V1 signed intents do not bind the auction ID or epoch; operational draining is required between lots.
+- Publisher-owned Arkiv entities are immutable in content but still deletable by that owner.
+- The deployed live engine uses an event-laptop Cloudflare quick tunnel and may be offline outside the demo window.
+- Seller onboarding and opening a round still require operator involvement.
+- Real press-to-engine-ack latency has not yet been published as a measured benchmark; the 10-second hammer countdown is confirmed for hardware rounds.
 
 ## License
 
