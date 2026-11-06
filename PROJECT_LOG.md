@@ -23,6 +23,7 @@ A live auction run with physical paddle tags, built for **ETHGlobal Mumbai (Nov 
 | Sponsor | **Arkiv only** (one Arkiv track prize + optional Swarm bonus) | `arkiv/` |
 | Track | **Build on Arkiv (from scratch)** (Kev, Fri 6 Nov ~19:30). Requires ETHGlobal's Classic rules: no pre-existing project-specific code; see the changelog entry "track and rules" | `README.md`, `arkiv/` |
 | Button | **Press = bid at the next step** (not a jump bid on a running clock) | engine `auction.py` |
+| Who opens bidding | **The auctioneer**, on one lot at a time, from the website's `/admin` page (password). Bidding is open at once; no minimum number of paddles; any seated paddle can join at any time and bid. A **lone bidder wins** at their bid. A **no-bid timer** (1/2/5/10 min, chosen by the auctioneer) runs from opening; with no bid the lot closes UNSOLD and goes back to the seller (Kev, Sat 7 Nov ~02:15) | engine `auction.py`, `web/src/app/admin/` |
 | Leader switches OFF | **Bid stays binding**; they can still win | engine `auction.py` |
 | Step | **+5% per bid** (500 bps), configurable per auction | rules |
 | Countdown | V6 hardware rounds use 10 s via published countdownMs=10000; unchanged engine seed defaults to 5 s unless SEED_COUNTDOWN_MS=10000 | auction rules / engine env |
@@ -67,6 +68,9 @@ Planning documents (outside the repo): `/Users/kev/Hackathons/EthGlobal/Plans/`.
 | Arkiv entity schemas (5 types) | `web/src/lib/arkiv/schemas.ts` | `arkiv-worker/src/schemas.ts` (identical copy) |
 | Serial protocol (115200; AUCTION_EVENT/STATE/ACK_JSON, session-correlated ACKs, AUCTION_STATUS/BRIDGE_JSON, CMD=STATUS) | `bridge/README.md` | gateway firmware |
 | Outbox (`GET /outbox`, `POST /outbox/{id}/published`) | `engine/bid3_engine/api.py` | `arkiv-worker/src/index.ts` |
+| Public lot list `GET /auctions` (auctionId, listingId, phase, priceMinor, bidCount, leaderAlias) | `engine/bid3_engine/api.py` | `web/src/lib/lot-state.ts` (`EngineLot`) |
+| Admin calls (`POST /auctions`, `/open`, `/cancel` with `ADMIN_TOKEN`; house rules 5% / 10 s / ceiling 10× opening) | `engine/bid3_engine/api.py` | `web/src/lib/admin/server.ts` |
+| Paddle roster (tagRef, alias, publicKey per seat) | `firmware/integration/auction-template.json` | `web/src/lib/admin/paddles.ts`. Check: `jq -c '[.seats[] \| {tagRef, alias, publicKey}]' firmware/integration/auction-template.json` and compare |
 
 V6 firmware retains the V4 AUCTION serial contract and remains compatible with the existing bridge. Each JOIN/LEAVE/BID is signed using the existing engine Bid3.Intent.v1 format; enable INTENT_SIGNATURES_REQUIRED and enroll the seat public keys. The engine remains the sole auction authority. V6 templates use a 10-second countdown; existing frozen auctions and the engine's 5-second seed default are not changed silently. V1 signatures do not include auctionId/epoch: one active lot and drained pending requests are required before switching lots. Cross-round replay protection remains a coordinated engine-contract follow-up.
 
@@ -84,7 +88,9 @@ Checks that catch drift:
 | `engine` | `cd engine && set -a && source .env && set +a && caffeinate -i .venv/bin/python -m bid3_engine` | `Uvicorn running on http://0.0.0.0:8010` |
 | `worker` | `cd arkiv-worker && npm start` | `Writing to Arkiv as 0xCf11CEa33b48A48901DD2a03730524a69E64e32d` |
 | `bridge` | `cd bridge && set -a && source ../engine/.env && set +a && ../engine/.venv/bin/python bid3_bridge.py --port /dev/cu.usbserial-<n> --engine ws://localhost:8010 --token "$BRIDGE_TOKEN"` | `/health` shows `bridgeConnected: true` |
-| `ops` | `scripts/tunnel.sh` (once); `scripts/new-lot.sh <n>` for each round; `curl -s localhost:8010/health \| jq` | the tunnel script prints ✅ for the engine and the site |
+| `ops` | `scripts/tunnel.sh` (once). Then run lots from **`https://bid3.vercel.app/admin`** ("Open bidding" per lot). Fallbacks: `scripts/new-lot.sh` / `scripts/auto-rounds.sh` (create their own keyboard listing, no admin) | the tunnel script prints ✅ for the engine and the site |
+
+**Admin page:** needs two **server** env vars in Vercel, both type Secret and without the `NEXT_PUBLIC_` prefix: `ADMIN_TOKEN` (the same value as in `engine/.env`) and `ADMIN_PASSWORD` (Kev's choice). The browser sends the password to `/api/admin/*`; the server calls the engine through the tunnel with the token. The demo catalogue is `npm run seed-catalogue` in `arkiv-worker` (six items, lots 11–16, `bid3-cat-NN`; safe to rerun).
 
 **Tunnel:** `scripts/tunnel.sh` runs `cloudflared` in the background, outside any terminal (log: `~/Library/Logs/bid3-tunnel.log`).
 - Closing terminals or restarting the engine, worker or bridge doesn't change its URL. Only a reboot or `scripts/tunnel.sh stop` does.
@@ -151,6 +157,56 @@ With no env, the web app runs a labelled in-browser simulation and bundled sampl
 ---
 
 ## Changelog
+
+### 2026-11-07 ~03:30 IST: auctioneer opens bidding; catalogue of real lots; sellers from any wallet
+Kev asked for this (Sat ~02:15). He also asked that working code not be disturbed, so every part below was tested before being called done.
+
+- **Engine rules (`engine/bid3_engine/auction.py`):**
+  - `open()` goes straight to OPEN: the operator declares bidding open.
+  - No two-paddle minimum: joining no longer opens bidding, and leaving no longer sends the lot back to LOBBY.
+  - Resuming with no leader returns to OPEN.
+  - The "two paddles were never on together" closing check is removed, so a **lone bidder wins** at their bid.
+  - The no-bid timer (`timeLimitMs`) was already counted from opening and already closes the lot UNSOLD.
+  - A lot an older engine left in LOBBY opens on its first JOIN.
+  - `hadCompetition` is still tracked but no longer required. It isn't part of AuctionResult, so the Arkiv contract is unchanged.
+- **`GET /auctions`** now also returns `leaderAlias`, an extra field.
+- **Engine tests:** 4 updated to the new rule, 5 added (lone bidder wins; timer from opening; joining mid-countdown can bid; leaving doesn't close bidding; old LOBBY lot opens on join). `pytest` 49 passed. Firmware `test_current_engine_v4` OK, bridge 2 passed, vectors unchanged, `check-schemas` OK.
+- **Web rules wording and simulator** match the engine (`simulator.ts`, `phase-copy.ts`, seat page, simulation controls).
+- **Lots page:**
+  - New `web/src/lib/lot-state.ts` gives each lot's real state: from the engine's `GET /auctions` (polled every 5 s), otherwise from publisher-owned AuctionResults on Arkiv, otherwise "Up next".
+  - The lot card shows Live now / Up next / Sold to Paddle X for Y / Unsold, back with the seller.
+  - The status chips filter on that state. Category and price filters are still Arkiv queries.
+  - Listings and results refetch every 15 s, so new listings reach every viewer.
+- **Six demo items** (`arkiv-worker/src/seed-catalogue.ts`, `npm run seed-catalogue`): lots 11–16, `bid3-cat-11`…`16`, `item-11`…`16`, status UPCOMING, listed for 7 days, owned by the publisher. Written to Arkiv at ~03:00; a second run skipped all six.
+- **Admin page `/admin`:** password sign-in, "On the block" with Withdraw, the no-bid timer (1/2/5/10 min), and the lot list with "Open bidding" on Up-next lots.
+  - Server routes `/api/admin/{login,start,cancel}` and `web/src/lib/admin/server.ts`. `ADMIN_TOKEN` and `ADMIN_PASSWORD` stay on the server.
+  - It refuses to start while another lot is still running.
+  - It seats the paddle roster (`web/src/lib/admin/paddles.ts`, checked identical to the firmware template) with house rules: 5%, 10 s, ceiling 10× the opening bid.
+  - Tested the route handlers against a fake engine: not configured gives 503; wrong password 401; a bad timer or ID 400; another lot running 409; withdraw works; start creates the right body and then opens; a duplicate lot gives 409; every engine call carries the token.
+- **Sell an item:** one form (title, category, condition, opening bid, description), published from the connected wallet.
+  - It switches the wallet to Rabdi, adding the network if needed, and shows friendly errors for no tGLM (with a faucet link) and a cancelled signature.
+  - Lot numbers continue after the highest listed.
+  - "Your lots" shows the seller each outcome; unsold lots say "back with you". This is the seller's notification.
+  - The old Rules, Paddles, Readiness and operator `curl` steps are gone: the auctioneer applies house rules from the admin page.
+- **Web checks:** whole-app `tsc` and `eslint` clean; `next build` passes (in a scratch copy; Kev's `web/.next` untouched).
+- **Not tested:**
+  - In a browser: the admin page, the new Lots page and the seller page.
+  - A real seller publish from MetaMask: the switch to Rabdi, gas, the write.
+  - The new engine rules with the real paddles.
+- **To go live:**
+  1. Stop `auto-rounds` and restart the engine; the new rules need it. Lot `bid3-007`, left in LOBBY by the old rules, then opens on the first JOIN; withdraw it from `/admin` if not wanted.
+  2. Add `ADMIN_TOKEN` and `ADMIN_PASSWORD` in Vercel.
+  3. Commit and push.
+- **Not updated (Sanskar's, checksummed):** `firmware/BIDDING_RULES.md` line 8 still says fewer than two bidders means LOBBY, and `FAST_PROTOCOL.md` and `VALIDATION.md` mention LOBBY. The firmware works unchanged: it just shows OPEN sooner.
+
+### 2026-11-07 ~02:05 IST: automatic back-to-back rounds
+- **New `scripts/auto-rounds.sh`:** opens the next lot (via `new-lot.sh`) and prints a line whenever the phase, bid count, leader or paddles change.
+  - After a sale it waits `PAUSE_S` (default 20 s), then opens the next lot.
+  - It stops by itself when a lot closes UNSOLD or CANCELLED, so an unattended room doesn't keep publishing empty lots to Arkiv.
+  - If a lot is already running when it starts, it watches that lot first. `--watch <id>` only shows one lot's progress.
+- **No paddle toggling between lots:** confirmed in `bridge/bid3_bridge.py` that the bridge sends `CMD=STATUS` when the `auctionId` changes, which asks the gateway to re-announce switched-on tags. The open Live room page follows to each new lot.
+- **Checked under macOS bash 3.2:** `--watch` on three closed lots returns at once with the right lines, and the stop and continue rules work. **Not checked:** the full loop, because it opens real lots on the engine and Arkiv. Its first real run will be the test.
+- **Merge check:** Kev's merge of PR #2 kept both sets of log entries, and there are no conflict markers left.
 
 ### 2026-11-07 ~01:45 IST: new-lot.sh picks the next number
 - `scripts/new-lot.sh` with no argument asks the engine's `GET /auctions` for the highest `bid3-NNN` and opens the next one. Right now that's 6 (it has 3, 4 and 5; `bid3-hw-01` is ignored). An explicit number still works.
