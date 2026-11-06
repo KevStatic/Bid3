@@ -1,6 +1,6 @@
-# Bid3 hardware firmware — V4
+# Bid3 hardware firmware — V5
 
-Uploadable Arduino sources for two Seeed XIAO ESP32-C3 bidder tags and an ESP32-WROOM gateway. V4 reuses the original owner-tested BLE advertisements, discovery and enrolled signed button proofs, then adds authenticated persistent notifications for individual auction intents. The matching USB bridge is maintained once, in [../bridge/bid3_bridge.py](../bridge/bid3_bridge.py).
+Uploadable Arduino sources for two Seeed XIAO ESP32-C3 bidder tags and an ESP32-WROOM gateway. V5 reuses the original owner-tested BLE advertisement format, discovery and enrolled signed button proofs, then adds authenticated persistent notifications for individual auction intents. The matching USB bridge is maintained once, in [../bridge/bid3_bridge.py](../bridge/bid3_bridge.py).
 
 | Device | Sketch | Arduino FQBN | Serial baud |
 |---|---|---|---:|
@@ -9,6 +9,12 @@ Uploadable Arduino sources for two Seeed XIAO ESP32-C3 bidder tags and an ESP32-
 | Gateway | [Gateway/Gateway.ino](Gateway/Gateway.ino) | esp32:esp32:esp32 | 115200 |
 
 Use **Espressif ESP32 core 3.3.12** and **Arduino CLI 1.5.1** for repeatable builds. Built-in BLE, mbedTLS, Wire, Preferences and FreeRTOS are sufficient. Keep all headers beside each .ino. Preserve enrolled NVS identities: **Erase All Flash Before Sketch Upload = Disabled**. The supplied public enrollment values match the owner's actual devices; no device private keys are checked in.
+
+## Immediate button display
+
+V5 sends an 80-byte session-HMAC input receipt from the tag's2ms button sampler after the existing30ms debounce. A dedicated gateway task checks it without waiting for ECDSA, GATT control writes or the engine. The OLED shows BUTTON PRESSED, tag number, count and DOWN/UP; it can interrupt a queued animation frame and startup. An80ms minimum input overlay prevents a fast engine result from erasing all visible press feedback. Only a separate engine ACK means BID ACCEPTED.
+
+Offline JOIN/LEAVE receives a local RECEIVED acknowledgement, which is not admission. This keeps the link alive for button diagnostics without the old 3-second reconnect loop. Valid price bids remain individually signed. Existing V4 bridge/engine code stays compatible; all three boards must be upgraded to V5 for the new UI receipt.
 
 ## Upload and operate
 
@@ -41,6 +47,6 @@ arduino-cli core update-index --additional-urls https://espressif.github.io/ardu
 arduino-cli core install esp32:esp32@3.3.12 --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
 ```
 
-The checksum check also validates canonical shared-header copies. It runs ten C++ programs with sanitizers, firmware Python checks against the real engine canonical message/state machine, and the bridge's PTY/ACK tests. Temporary executables remain outside the source tree. After intentional source changes regenerate SHA256SUMS.json with `python tools/check.py --update-checksums`, then rerun checks. CI runs the same checks, engine tests and all three board builds.
+The checksum check also validates canonical shared-header copies. It runs eleven C++ programs with sanitizers, firmware Python checks against the real engine canonical message/state machine, and the bridge's PTY/ACK tests. Temporary executables remain outside the source tree. After intentional source changes regenerate SHA256SUMS.json with `python tools/check.py --update-checksums`, then rerun checks. CI runs the same checks, engine tests and all three board builds.
 
-[VALIDATION.md](VALIDATION.md) records the delivered code's target builds and host verification. Real RF, acoustic/LED timing, heap margin and a complete assembled-hardware round remain bench acceptance work. [previews/gateway-screens.png](previews/gateway-screens.png) is rendered from the actual OLED drawing code. [legacy_docs/](legacy_docs/) records the working baseline's provenance; V2 remains in Git history. Archives, build products and raw local logs are excluded from Git. Font attribution is in [FONT_LICENSE.txt](FONT_LICENSE.txt).
+[VALIDATION.md](VALIDATION.md) records the delivered code's target builds and host verification. Real RF, acoustic/LED timing, heap margin and a complete assembled-hardware round remain bench acceptance work. [previews/gateway-screens.png](previews/gateway-screens.png) is rendered from the actual OLED drawing code. [legacy_docs/](legacy_docs/) records the working baseline's provenance; V2 and V4 remain in Git history. Archives, build products and raw local logs are excluded from Git. Font attribution is in [FONT_LICENSE.txt](FONT_LICENSE.txt).

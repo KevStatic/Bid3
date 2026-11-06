@@ -5,19 +5,21 @@
 #include <cJSON.h>
 namespace GatewayApp {
 struct FastSlot{
- std::atomic<bool> live{false},auth{false},resync{false},proofSeen{false};std::atomic<uint32_t> lastAt{0};
+ std::atomic<bool> live{false},auth{false},resync{false},proofSeen{false};std::atomic<uint32_t> lastAt{0},generation{0};
  uint8_t shared[32]={0},key[32]={0},nonce[32]={0},boot[8]={0},lastEvent[Fast::EVENT]={0};
  BLERemoteCharacteristic*channel=nullptr;SemaphoreHandle_t state=nullptr,io=nullptr;
  uint32_t ctrl=0,eventSeq=0,beatSeq=0,pendingSeq=0,attachAt=0;uint8_t pendingKind=0,lastResult=Fast::REFUSED;
+ Fast::InputWindow inputWindow;
  bool pending=false,acked=false;char session[82]={0};
 };
 std::atomic<bool> fastFeature(false);
 std::atomic<uint32_t> fastOverflow(0);std::atomic<uint32_t> fastWriteHandle[2]={{UINT32_MAX},{UINT32_MAX}},fastWriteAt[2]={{0},{0}};
 FastSlot fastSlots[2];std::atomic<bool> fastKeysReady(false);
 struct FastRx{uint8_t tag=0;uint16_t n=0;uint32_t at=0;uint8_t bytes[Fast::EVENT]={0};};
+struct InputUi{uint8_t tag=0;bool held=false;uint32_t count=0,at=0,generation=0;};
 struct FastAck{uint8_t tag=0,result=Fast::REFUSED;uint32_t seq=0;char session[82]={0};};
 struct FastUi{uint8_t kind=0,tag=0;uint32_t count=0;uint64_t price=0;};
-QueueHandle_t fastEvents=nullptr,fastBeats=nullptr,fastAcks=nullptr,fastUi=nullptr,fastLegacy=nullptr;
+QueueHandle_t fastInputs=nullptr,fastInputUi=nullptr,fastEvents=nullptr,fastBeats=nullptr,fastAcks=nullptr,fastUi=nullptr,fastLegacy=nullptr;
 std::atomic<uint32_t> roomAt(0),roomVersion(Fast::MISSING);std::atomic<uint8_t> roomPhase(Fast::PAUSED);
 std::atomic<bool> engineUp(false),roomDirty(false);std::atomic<uint64_t> roomNext(0);
 std::atomic<bool> fxPowered(false),fxFatal(false),fxActive(false),fxSensorWarning(false),fxActiveModule(false),fxActiveLow(false);
@@ -31,7 +33,7 @@ void fastDrop(int tag){auto&s=fastSlots[tag];bool had=s.live.exchange(false);s.a
 void fastNotify(int tag,uint8_t*p,size_t n){
  if(!fastSlots[tag].live.load()||(n!=Fast::EVENT&&n!=Fast::HEARTBEAT))return;
  FastRx e;e.tag=tag;e.n=n;e.at=millis();memcpy(e.bytes,p,n);
- QueueHandle_t q=n==Fast::EVENT?fastEvents:fastBeats;if(xQueueSend(q,&e,0)!=pdTRUE)fastOverflow.fetch_or(1u<<tag);
+ QueueHandle_t q=n==Fast::EVENT?fastEvents:!memcmp(p,"B5I1",4)?fastInputs:fastBeats;if(xQueueSend(q,&e,0)!=pdTRUE)fastOverflow.fetch_or(1u<<tag);
 }
 void fastNotify0(BLERemoteCharacteristic*,uint8_t*p,size_t n,bool){fastNotify(0,p,n);}
 void fastNotify1(BLERemoteCharacteristic*,uint8_t*p,size_t n,bool){fastNotify(1,p,n);}
@@ -42,10 +44,10 @@ bool fastAttach(int tag,BLERemoteService*service,const uint8_t proof[199]){
  if(!notify||!notify->canNotify()||!channel||!channel->canWrite()){fastLink(tag,"LEGACY_PROOF_ONLY");return false;}
  auto&s=fastSlots[tag];uint8_t derived[32];if(!FastCrypto::key(s.shared,proof,derived))return false;
  {FastGuard guard(s.state);memcpy(s.key,derived,32);memcpy(s.nonce,proof+94,32);memcpy(s.boot,proof+14,8);
-  Fast::session(s.boot,s.nonce,s.session);s.channel=channel;s.ctrl=0;s.eventSeq=0;s.beatSeq=0;s.pending=false;s.acked=false;s.attachAt=millis();s.lastAt.store(s.attachAt);s.auth.store(false);s.live.store(true);}
+  Fast::session(s.boot,s.nonce,s.session);s.channel=channel;s.generation.fetch_add(1);s.inputWindow={};s.ctrl=0;s.eventSeq=0;s.beatSeq=0;s.pending=false;s.acked=false;s.attachAt=millis();s.lastAt.store(s.attachAt);s.auth.store(false);s.live.store(true);}
  notify->registerForNotify(tag?fastNotify1:fastNotify0);
  // Optional live-channel tuning only; a declined update keeps the working interval.
- if(!clients[tag]->updateConnParams(12,24,0,200))fastLink(tag,"KEEPING_CURRENT_CONNECTION_INTERVAL");
+ if(!clients[tag]->updateConnParams(6,12,0,200))fastLink(tag,"KEEPING_CURRENT_CONNECTION_INTERVAL");
  fastLink(tag,"BASELINE_VERIFIED_FAST_NEGOTIATING");return true;
 }
 bool fastControl(int tag,Fast::Command kind,uint32_t ref=0,uint8_t result=Fast::REFUSED){
@@ -83,7 +85,7 @@ void fastCommand(char*line){
  else if(!strncmp(line,"AUCTION_ACK_JSON=",17)){body=line+17;type=ACK;}
  else if(!strncmp(line,"AUCTION_BRIDGE_JSON=",20)){body=line+20;type=HEALTH;}
  if(!body)return;cJSON*j=cJSON_Parse(body);if(!j||!cJSON_IsObject(j)){cJSON_Delete(j);return;}
- if(type==HEALTH){auto*x=cJSON_GetObjectItemCaseSensitive(j,"engine");bool up=cJSON_IsString(x)&&!strcmp(x->valuestring,"ok");engineUp.store(up);roomAt.store(millis());if(!up){roomPhase.store(Fast::PAUSED);roomDirty.store(true);}}
+ if(type==HEALTH){auto*x=cJSON_GetObjectItemCaseSensitive(j,"engine");bool up=cJSON_IsString(x)&&!strcmp(x->valuestring,"ok");bool wasUp=engineUp.exchange(up);roomAt.store(millis());if(up&&!wasUp)for(auto&s:fastSlots)if(s.live.load())s.resync.store(true);if(!up){roomPhase.store(Fast::PAUSED);roomDirty.store(true);}}
  if(type==STATE){uint32_t version;auto*phase=cJSON_GetObjectItemCaseSensitive(j,"phase");auto*next=cJSON_GetObjectItemCaseSensitive(j,"next");
   bool hasVersion=jsonInteger(cJSON_GetObjectItemCaseSensitive(j,"stateVersion"),version);if(hasVersion)roomVersion.store(version);
   if(cJSON_IsString(phase)){uint8_t parsed=parseRoomPhase(phase->valuestring);uint8_t old=roomPhase.exchange(parsed);
@@ -117,6 +119,18 @@ void forwardFastEvent(int t,const uint8_t*p){
  if(p[6]==Fast::BID)Serial.printf("AUCTION_EVENT_JSON={\"kind\":\"BID\",\"tag\":\"TAG%d\",\"session\":\"%s\",\"seq\":%lu,\"stateVersion\":%lu,\"sig\":\"%s\"}\n",t+1,sid,(unsigned long)Fast::get32(p+40),(unsigned long)Fast::get32(p+44),sig);
  else Serial.printf("AUCTION_EVENT_JSON={\"kind\":\"%s\",\"tag\":\"TAG%d\",\"session\":\"%s\",\"seq\":%lu,\"sig\":\"%s\"}\n",Fast::kindName(p[6]),t+1,sid,(unsigned long)Fast::get32(p+40),sig);
 }
+// This task never waits for a GATT write, ECDSA verification or engine decision.
+void fastInputWorker(void*){
+ FastRx e;
+ for(;;){if(xQueueReceive(fastInputs,&e,portMAX_DELAY)!=pdTRUE)continue;
+  auto&s=fastSlots[e.tag];InputUi u;
+  {FastGuard guard(s.state);uint32_t count=Fast::get32(e.bytes+52);
+   if(!s.live.load()||!Fast::inputFields(e.bytes,e.n,e.tag+1,s.nonce,s.boot)||!s.inputWindow.eligible(e.bytes)||!FastCrypto::check(s.key,Fast::INPUT_DOMAIN,e.bytes,64))continue;
+   s.inputWindow.commit(e.bytes);s.lastAt.store(e.at);u.tag=e.tag;u.held=e.bytes[7];u.count=count;u.at=e.at;u.generation=s.generation.load();
+  }
+  if(xQueueSend(fastInputUi,&u,0)!=pdTRUE)fastOverflow.fetch_or(1u<<e.tag);
+ }
+}
 void fastWorker(void*){
  mbedtls_ecp_keypair peers[2];for(auto&p:peers)mbedtls_ecp_keypair_init(&p);while(!fastKeysReady.load())vTaskDelay(pdMS_TO_TICKS(20));
  for(int t=0;t<2;++t)if(!FastCrypto::publicKey(peers[t],Security::tags[t].pub)){vTaskDelete(nullptr);return;}
@@ -140,14 +154,20 @@ void fastWorker(void*){
    if(duplicate){if(alreadyAcked)fastControl(e.tag,Fast::ACK,seq,result);continue;}
    uint32_t at=micros();if(!FastCrypto::verify(peers[e.tag],e.bytes))continue;uint32_t verifyUs=micros()-at;
    {FastGuard guard(s.state);if(!s.live.load()||memcmp(keyCopy,s.key,32))continue;s.eventSeq=seq;s.pending=true;s.pendingSeq=seq;s.pendingKind=e.bytes[6];s.acked=false;memcpy(s.lastEvent,e.bytes,Fast::EVENT);s.lastAt.store(e.at);}
-   if(e.bytes[6]==Fast::PRESS){
+   bool offline=!engineUp.load()||roomVersion.load()==Fast::MISSING||uint32_t(millis()-roomAt.load())>=1500;
+   if(offline&&e.bytes[6]!=Fast::PRESS){
+    uint8_t local=e.bytes[6]==Fast::BID?Fast::REFUSED:Fast::RECEIVED;
+    {FastGuard guard(s.state);s.pending=false;s.acked=true;s.lastResult=local;}
+    // Receipt is not auction admission. Keep standalone detection connected.
+    fastControl(e.tag,Fast::ACK,seq,local);
+   }else if(e.bytes[6]==Fast::PRESS){
     {FastGuard guard(s.state);s.pending=false;s.acked=true;s.lastResult=Fast::RECEIVED;}
     fastControl(e.tag,Fast::ACK,seq,Fast::RECEIVED);postButton(e.tag,Fast::get32(e.bytes+52),1,false,false);
     Serial.printf("BUTTON_FAST_JSON={\"tag\":%d,\"verified\":true,\"seq\":%lu,\"verify_us\":%lu,\"diagnostic\":true}\n",e.tag+1,(unsigned long)seq,(unsigned long)verifyUs);
    }else forwardFastEvent(e.tag,e.bytes);
   }
   uint32_t lastRoom=roomAt.load(),now=millis();
-  if(uint32_t(now-lastStatus)>=500){lastStatus=now;Serial.printf("AUCTION_STATUS_JSON={\"build\":\"V4_WORKING_BASE\",\"running\":true,\"tag1_fast\":%u,\"tag2_fast\":%u,\"tag1_proof_seen\":%u,\"tag2_proof_seen\":%u}\n",fastSlots[0].auth.load(),fastSlots[1].auth.load(),fastSlots[0].proofSeen.load(),fastSlots[1].proofSeen.load());}if(engineUp.load()&&uint32_t(now-lastRoom)>1500){engineUp.store(false);roomPhase.store(Fast::PAUSED);}
+  if(uint32_t(now-lastStatus)>=500){lastStatus=now;Serial.printf("AUCTION_STATUS_JSON={\"build\":\"V4_WORKING_BASE\",\"firmware\":\"V5_LIVE_INPUT\",\"running\":true,\"tag1_fast\":%u,\"tag2_fast\":%u,\"tag1_proof_seen\":%u,\"tag2_proof_seen\":%u}\n",fastSlots[0].auth.load(),fastSlots[1].auth.load(),fastSlots[0].proofSeen.load(),fastSlots[1].proofSeen.load());}if(engineUp.load()&&uint32_t(now-lastRoom)>1500){engineUp.store(false);roomPhase.store(Fast::PAUSED);}
   bool controlDue=roomDirty.exchange(false)||uint32_t(now-lastControl)>=200;
   for(int t=0;t<2;++t){auto&s=fastSlots[t];if(!s.live.load())continue;
    uint32_t heard=s.lastAt.load();now=millis();if(!clients[t]->isConnected()||uint32_t(now-heard)>(s.auth.load()?1500u:8000u)){fastDrop(t);FastGuard io(s.io);if(clients[t]->isConnected())clients[t]->disconnect();continue;}
@@ -158,9 +178,10 @@ void fastWorker(void*){
 }
 bool fastGatewayInit(){
  if(!BID3_ENABLE_FAST_CHANNEL)return false;
+ fastInputs=xQueueCreate(24,sizeof(FastRx));fastInputUi=xQueueCreate(24,sizeof(InputUi));
  fastEvents=xQueueCreate(16,sizeof(FastRx));fastBeats=xQueueCreate(16,sizeof(FastRx));fastAcks=xQueueCreate(16,sizeof(FastAck));fastUi=xQueueCreate(16,sizeof(FastUi));fastLegacy=xQueueCreate(16,sizeof(char));fxQueue=xQueueCreate(12,sizeof(FxRequest));
  for(auto&s:fastSlots){s.state=xSemaphoreCreateMutex();s.io=xSemaphoreCreateMutex();}
- return fastEvents&&fastBeats&&fastAcks&&fastUi&&fastLegacy&&fxQueue&&fastSlots[0].state&&fastSlots[1].state&&fastSlots[0].io&&fastSlots[1].io;
+ return fastInputs&&fastInputUi&&fastEvents&&fastBeats&&fastAcks&&fastUi&&fastLegacy&&fxQueue&&fastSlots[0].state&&fastSlots[1].state&&fastSlots[0].io&&fastSlots[1].io;
 }
 bool fastGatewayKeys(){for(int t=0;t<2;++t)if(!FastCrypto::shared(Security::own,Security::tags[t].pub,Security::rng,fastSlots[t].shared))return false;fastKeysReady.store(true);return true;}
 }

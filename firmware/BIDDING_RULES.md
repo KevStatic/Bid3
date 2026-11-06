@@ -12,7 +12,7 @@ These rules apply to the existing authoritative engine with this firmware/bridge
 | Different quote versions | Each is checked against the engine's current state. A newer valid quote can be accepted; no bid is silently repriced. |
 | Leading bidder presses again | Refused as LEADING; it does not restart the timer. |
 | Duplicate radio delivery | Same session/sequence and exact packet is acknowledged again; it is not forwarded as a new bid. |
-| Press before admission, in LOBBY, paused or without a current engine quote | May produce an authenticated PRESS diagnostic; it cannot become an accepted price bid. |
+| Press before admission, in LOBBY, paused or without a current engine quote | Shows an authenticated BUTTON PRESSED / INPUT RECEIVED diagnostic; it cannot become an accepted price bid. |
 | New bid accepted | Leader/price update; full 10,000 ms countdown restarts from engine acceptance. |
 | Rejected/invalid press | No price increase and no countdown restart. |
 | No accepted bid for ten seconds after the latest accepted bid | If the engine remains healthy and competition occurred, lock SOLD to the current accepted leader. |

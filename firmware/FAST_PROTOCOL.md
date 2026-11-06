@@ -1,4 +1,4 @@
-# Bid3 V4 fast extension
+# Bid3 V5 fast extension (V4 bid transport retained)
 
 All integers below are little endian; packet sizes include their authenticators. The original BLE manufacturer bytes, service UUID, INFO/TELEMETRY/CHALLENGE/RESPONSE UUIDs, BTB1 request, BTP1 proof, signature domains, enrollment and NVS namespaces are preserved. `BUTTON_PROTOCOL.md` documents that original path. It remains a detection/diagnostic fallback; historical count deltas never create auction intents.
 
@@ -8,7 +8,7 @@ All integers below are little endian; packet sizes include their authenticators.
 2. Optional event characteristic `b7610006-7e1d-4e8b-9a73-8f1b0c4d9000` is READ/NOTIFY; separate control characteristic `b7610007-7e1d-4e8b-9a73-8f1b0c4d9000` is WRITE with response. MTU must fit 144+3. The existing path requests MTU247.
 3. Static secp256k1 ECDH X coordinate is precomputed from the stored device key and enrolled peer public key. HKDF-SHA256 uses salt=proof[94:126], IKM=sharedX, info=ASCII `Bid3.FastSession.v4` + boot8 (proof[14:22]) + gatewayUUID16 (proof[46:62]). Output=32 bytes.
 4. Gateway subscribes and sends MAC-authenticated INIT. The tag enables the extension only after that MAC verifies. It sends a signed JOIN/LEAVE and independent authenticated heartbeats. No GPIO arm gate or USB enrollment is involved.
-5. Gateway requests a 15–30 ms BLE connection interval, zero peripheral latency, after baseline validation. This is a requested interval, not a measured delivery bound; a declined request retains the current interval.
+5. Gateway requests a 7.5–15 ms BLE connection interval, zero peripheral latency, after baseline validation. This is a requested interval, not a measured delivery bound; a declined request retains the current interval.
 
 ## Common 64-byte event/heartbeat header
 
@@ -45,3 +45,15 @@ Controls refresh every200ms and on state changes. A tag can sign a BID only afte
 115200 baud, newline-delimited JSON. Gateway emits AUCTION_EVENT_JSON (JOIN/LEAVE/BID with session, seq, sig, and BID stateVersion) and LINK OK/LOST. Bridge returns AUCTION_STATE_JSON and AUCTION_ACK_JSON with the **matching session**. The bundled bridge adds AUCTION_BRIDGE_JSON for engine liveness and reads AUCTION_STATUS_JSON for running gateway health. It accepts only the expected V4 running-status schema. Legacy proof/diagnostic lines remain separate.
 
 The engine's v1 signature does not bind auctionId or epoch. This extension authenticates the RF session but does not change that engine contract. Operate one active lot and drain pending work before changing it. Transport/session binding does not itself supply cross-round replay protection.
+
+## V5 UI-only input receipt
+
+`B5I1`, 80 bytes: same common header layout, version1, kind=PRESS4, byte7=held0/1, independent monotonic input sequence at40, quote version44 (diagnostic), observed debounce completion time48, count52, boot56. HMAC16 at64 covers ASCII `Bid3.ButtonInput.v5` + first64 bytes with the existing authenticated session key. This packet has no ECDSA signature and is never forwarded as a bid. The original individually signed BID contract is unchanged.
+
+The 2 ms tag sampler sends press and release receipts without waiting for the main signing loop. It briefly repeats identical packets at 20 ms intervals; the gateway deduplicates the input sequence, enforces nondecreasing count, and checks nonce, boot, tag and MAC before updating UI. A new authenticated BLE session resets that replay window. Replayed frames cannot retrigger the OLED. A held button does not fabricate extra bids.
+
+A dedicated core1 input task verifies the receipt and queues the UI update. ECDSA processing runs on core0 so it cannot monopolize the OLED loop's core. Urgent OLED frames replace the pending animation snapshot and restart at page0; input receipt visibility does not wait for the 25 fps animation timer. The original 400 kHz page-at-a-time I2C driver/recovery behavior is retained. Press visibility lasts at least 80 ms even when an engine ACK is already available; after that the engine outcome may replace it. Release updates do not erase the outcome. Both tags' current input rows remain represented.
+
+Standalone JOIN/LEAVE packets are locally acknowledged RECEIVED when there is no fresh engine state. This clears the tag's transport wait without admitting it to an auction or repeatedly disconnecting. Offline BID is REFUSED. Fresh bridge connectivity requests signed re-announcement. The status line keeps `build=V4_WORKING_BASE` for existing bridge compatibility and adds `firmware=V5_LIVE_INPUT`. All three sketches need V5 for the new receipt; the deployed V4 bridge does not need replacement.
+
+Advertising payload/service/enrollment are unchanged; advertising interval is 50–75 ms instead of 250–300 ms. Requested established connection interval is 7.5–15 ms with zero peripheral latency. Missing-sensor configuration retries are deferred while connected. These remove avoidable waits, but cold authentication and actual button-to-pixel timing remain hardware measurements, not a zero-latency claim.

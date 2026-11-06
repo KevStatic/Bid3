@@ -1,4 +1,4 @@
-# Bid3 V4 — upload these three sketches
+# Bid3 V5 — upload these three sketches
 
 This is the corrected Gateway, Tag01 and Tag02 source package, rebuilt from the exact working ZIP you supplied. The original BLE advertisements, service, identity storage, discovery and signed button-proof exchange are the foundation. An authenticated persistent notification channel is enabled only after that original exchange succeeds.
 
@@ -14,9 +14,15 @@ This is the corrected Gateway, Tag01 and Tag02 source package, rebuilt from the 
 
 Discovery starts automatically when powered. No ESP RESET/BOOT button, `p` command, `GATEWAY_KEY` enrollment command, `BID3_ARM` command or GPIO33 connection is required for normal operation with your supplied identities. Firmware includes your two real tag public enrollments and pins your actual gateway public key. It never prints or replaces existing private keys silently.
 
+## New button behavior
+
+After FAST_READY, pressing either D2 button sends an immediate, session-authenticated input receipt to the OLED independently of bid signing and engine acknowledgements. You see **BUTTON PRESSED**, the tag number, press count and **DOWN/UP** state. This also works without the laptop bridge. The tag stays connected instead of repeatedly reconnecting on an unacknowledged offline JOIN. The input display can interrupt startup/animation frames.
+
+The 30 ms switch debounce remains intentional. BLE transmission, scheduling and the OLED transfer still take time; zero milliseconds is not a physical guarantee. Bid verification/engine confirmation remains separate from the input receipt.
+
 ## What you should see
 
-The gateway announces `Bid3 V4 WORKING_BASE`, then discovers the same `BagTrail-Tag01` and `BagTrail-Tag02` BLE devices as your working ZIP. The original signed checks produce `TAG01 BUTTON SYNC` / `TAG02 BUTTON SYNC`. Successful fast negotiation then prints:
+The gateway announces `Bid3 V5 WORKING_BASE`, then discovers the same `BagTrail-Tag01` and `BagTrail-Tag02` BLE devices as your working ZIP. The original signed checks produce `TAG01 BUTTON SYNC` / `TAG02 BUTTON SYNC`. Successful fast negotiation then prints:
 
 ```
 BID3_LINK tag=TAG1 state=FAST_READY
@@ -25,7 +31,7 @@ BID3_LINK tag=TAG2 state=FAST_READY
 
 `AUCTION_STATUS_JSON=` repeats automatically every 500 ms, including each tag's proof-seen and fast-ready flags. This lets you identify the loaded version without pressing a board button. Initial discovery/proof establishment still takes time; the faster path applies after the connection is established.
 
-Without the engine/bridge, a verified physical press is a **BUTTON VERIFIED diagnostic**, not an accepted price bid. Real auction operation requires the included matching bridge and the authoritative engine; see `INTEGRATION_BRIEF.md`. In particular, use a new auction with **countdownMs = 10000**. Existing frozen auctions are not silently rewritten.
+Without the engine/bridge, a verified physical press is a **BUTTON PRESSED / INPUT RECEIVED diagnostic**, not an accepted price bid. Real auction operation requires the included matching bridge and the authoritative engine; see `INTEGRATION_BRIEF.md`. In particular, use a new auction with **countdownMs = 10000**. Existing frozen auctions are not silently rewritten.
 
 ## Preserved hardware and display
 
@@ -41,10 +47,10 @@ Without the engine/bridge, a verified physical press is a **BUTTON VERIFIED diag
 
 | Observation | Meaning / next check |
 |---|---|
-| Gateway still prints old `BID3_HEALTH_JSON` at 460800 | An older build is running. Upload this package's `Gateway/Gateway.ino`; V4 is 115200 and has the V4 startup/status lines. |
+| Gateway still prints old `BID3_HEALTH_JSON` at 460800 | An older build is running. Upload this package's `Gateway/Gateway.ino`; V5 is 115200 and has the V5 startup/status lines. |
 | No `proof_seen` and no verified snapshot | Original discovery/authentication has not succeeded. Check matching uploads, tag slide switches, power and antennas. |
 | `REJECTED_TAG=... enrollment_mismatch` | Device identity differs from the supplied public enrollment. Do not erase keys to bypass it. |
-| Proof seen but no FAST_READY | Optional channel negotiation failed; signed snapshot diagnostics remain available. Check that both tag sketches are V4. |
+| Proof seen but no FAST_READY | Optional channel negotiation failed; signed snapshot diagnostics remain available. Check that both tag sketches are V5. |
 | FAST_READY but no accepted BID | Confirm the included bridge, engine connection, enrolled seat keys, two joined bidders and OPEN/COUNTDOWN phase. |
 
 `FastConfig.h` contains `BID3_ENABLE_FAST_CHANNEL`. Its default is 1. Setting it to 0 in **all three sketch folders** disables the new channel for comparison with the original signed-snapshot radio path; it does not implement auction bidding. The working archive hash and unchanged helper hashes are recorded in `legacy_docs/README.md` and `legacy_docs/BASELINE_SHA256.json`.

@@ -73,7 +73,7 @@ void buttonTask(void*){
     const bool held=digitalRead(BUTTON)==LOW;const uint32_t now=millis();
     portENTER_CRITICAL(&buttonLock);buttonInput.sample(held,now);auto b=buttonInput.snapshot();portEXIT_CRITICAL(&buttonLock);
     fastSample(b,held,now);
-    vTaskDelay(pdMS_TO_TICKS(5));
+    vTaskDelay(pdMS_TO_TICKS(2));
   }
 }
 constexpr size_t REQUEST_SIZE = 84, BODY_SIZE = 126, PROOF_SIZE = 190;
@@ -314,7 +314,7 @@ bool startBle() {
   const uint8_t m[]={0xFF,0xFF,'B','T',1,TAG}; // development manufacturer ID only
   adv.setManufacturerData(String(reinterpret_cast<const char *>(m),sizeof(m)));
   scan.setName(name);advertiser->setScanResponse(true);
-  advertiser->setMinInterval(0x0190);advertiser->setMaxInterval(0x01E0); // 250-300 ms
+  advertiser->setMinInterval(0x0050);advertiser->setMaxInterval(0x0078); // 50-75 ms; payload and service unchanged
   if(adv.getPayload().length()>31||scan.getPayload().length()>31) return false;
   if(!advertiser->setAdvertisementData(adv)||!advertiser->setScanResponseData(scan)) return false;
   bleStarted=true;checkSwitch();advertised=advertiser->start();
@@ -363,8 +363,7 @@ void setupTag() {
   ledPwmReady=ledcAttach(LED,LED_PWM_HZ,8);
   if(ledPwmReady) ledcWrite(LED,LED_DUTY);
   else {fatal=true;Serial.println("FATAL: LED PWM setup failed; indicator remains OFF.");return;}
-  uint32_t start=millis();while(!Serial&&millis()-start<1500) {checkSwitch();delay(5);}
-  Serial.printf("\nBid3 TAG%02u / V4 WORKING_BASE / D2=GPIO4 to GND / static dim LED / 115200 baud\n",TAG);
+  Serial.printf("\nBid3 TAG%02u / V5 LIVE_INPUT / D2=GPIO4 to GND / static dim LED / 115200 baud\n",TAG);
   Serial.println("D2 uses INPUT_PULLUP: released=HIGH, pressed=LOW; 30 ms debounce; one count per press.");
   if(xTaskCreate(buttonTask,"button-input",4096,nullptr,2,nullptr)!=pdPASS){
     fatal=true;Serial.println("FATAL: button sampler task creation failed. BLE not started.");return;
@@ -386,14 +385,14 @@ void loopTag() {
     reportedCount=button.count;reportedHeld=button.pressed;reportedOverflow=button.overflow;
     Serial.printf("BUTTON_LOCAL tag=%u count=%lu held=%u overflow=%u\n",TAG,(unsigned long)button.count,button.pressed,button.overflow);
   }
+  processRequest();fastTick(); // Handle live radio before optional sensor work.
   if(now-lastSample>=20) {lastSample=now;if(sensorConfigured) readMotion();}
-  if(!sensorConfigured&&now-lastRetry>=5000) {lastRetry=now;configureSensor();}
+  if(!sensorConfigured&&!connected.load()&&now-lastRetry>=5000) {lastRetry=now;configureSensor();}
   if(restartAdvertising.exchange(false)) {advertised=false;lastAdvertise=0;}
   if(!connected.load()&&!advertised&&now-lastAdvertise>=1000) {
     lastAdvertise=now;advertised=advertiser->start();
   }
   if(connected.load()&&!fastActive.load()&&now-connectedSince.load()>SESSION_MS) server->disconnect(server->getConnId());
-  processRequest();fastTick();
   if(now-lastTelemetry>=200) {lastTelemetry=now;publishTelemetry();}
   indicator(digitalRead(SWITCH)==LOW);
   if(now-lastLog>=2000) {

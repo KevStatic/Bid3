@@ -28,4 +28,17 @@ inline bool message(const uint8_t*event,char*out,size_t size){
 inline bool eventFields(const uint8_t*p,size_t n,uint8_t tag,const uint8_t nonce[32],const uint8_t boot[8]){
  return n==EVENT&&!memcmp(p,"B4E1",4)&&p[4]==1&&p[5]==tag&&p[6]>=JOIN&&p[6]<=PRESS&&!p[7]&&get32(p+40)&&!memcmp(p+8,nonce,32)&&!memcmp(p+56,boot,8);
 }
+// UI-only input receipt: authenticated by the existing session, never a BID.
+constexpr size_t INPUT_PACKET_SIZE=80;
+constexpr char INPUT_DOMAIN[]="Bid3.ButtonInput.v5";
+inline bool inputFields(const uint8_t*p,size_t n,uint8_t tag,const uint8_t nonce[32],const uint8_t boot[8]){
+ return n==INPUT_PACKET_SIZE&&!memcmp(p,"B5I1",4)&&p[4]==1&&p[5]==tag&&p[6]==PRESS&&p[7]<=1&&get32(p+40)&&get32(p+52)&&!memcmp(p+8,nonce,32)&&!memcmp(p+56,boot,8);
+}
+
+struct InputWindow {
+ uint32_t seq=0,count=0;
+ bool eligible(const uint8_t*p)const{return get32(p+40)>seq&&get32(p+52)>=count;}
+ void commit(const uint8_t*p){seq=get32(p+40);count=get32(p+52);}
+};
+
 }

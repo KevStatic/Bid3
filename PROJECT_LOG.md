@@ -25,7 +25,7 @@ A live auction run with physical paddle tags, built for **ETHGlobal Mumbai (Nov 
 | Button | **Press = bid at the next step** (not a jump bid on a running clock) | engine `auction.py` |
 | Leader switches OFF | **Bid stays binding**; they can still win | engine `auction.py` |
 | Step | **+5% per bid** (500 bps), configurable per auction | rules |
-| Countdown | V4 hardware rounds use 10 s via published countdownMs=10000; unchanged engine seed defaults to 5 s unless SEED_COUNTDOWN_MS=10000 | auction rules / engine env |
+| Countdown | V5 hardware rounds use 10 s via published countdownMs=10000; unchanged engine seed defaults to 5 s unless SEED_COUNTDOWN_MS=10000 | auction rules / engine env |
 | Stale presses | A press whose `stateVersion` predates the latest bid is refused as `STALE` | engine + firmware |
 | Frontend | Next.js 16 on Vercel | `web/` |
 | Backend | FastAPI engine + Python bridge on the laptop + TypeScript Arkiv worker | `engine/`, `bridge/`, `arkiv-worker/` |
@@ -43,14 +43,14 @@ engine/         FastAPI auction engine: single authority for order, price, count
 bridge/         Laptop program: gateway USB serial <-> engine WebSocket (+ fake gateway for tests)
 arkiv-worker/   Drains the engine outbox into Arkiv entities with the publisher wallet
 arkiv/          Arkiv prize write-ups (schema.md done; friction, reach, why-arkiv, how-you-use-arkiv to do)
-firmware/       V4 Arduino tag/gateway sources, wiring/protocol docs and hardware validation (firmware branch)
+firmware/       V5 Arduino tag/gateway sources, wiring/protocol docs and hardware validation (firmware branch)
 PROJECT_LOG.md  This file
 AGENTS.md       Pointer for AI tools: read this log first
 ```
 
 **Branches**
 - `main`: web, engine, bridge, arkiv-worker, arkiv docs, this log.
-- `firmware`: V4 Arduino C++ sources in `firmware/`, rebuilt from the owner-tested working BLE archive. The canonical `bridge/` now matches the AUCTION serial contract at 115200 baud. V2 is retained in Git history. See `firmware/README.md` for scope and remaining bench acceptance.
+- `firmware`: V5 Arduino C++ sources in `firmware/`, rebuilt from the owner-tested working BLE archive. The canonical `bridge/` now matches the AUCTION serial contract at 115200 baud. V2 and V4 are retained in Git history. See `firmware/README.md` for scope and remaining bench acceptance.
 
 **Who works where:** each component may be handled by a separate AI chat in the Claude Project "EthGlobal Hackathon" (engine, bridge, arkiv-worker, web, firmware). Every chat reads this log first, works only in its own folder or branch, changes a contract in section 4 only together with the other side, and adds a changelog entry here.
 
@@ -67,7 +67,7 @@ Planning documents (outside the repo): `/Users/kev/Hackathons/EthGlobal/Plans/`.
 | Serial protocol (115200; AUCTION_EVENT/STATE/ACK_JSON, session-correlated ACKs, AUCTION_STATUS/BRIDGE_JSON, CMD=STATUS) | `bridge/README.md` | gateway firmware |
 | Outbox (`GET /outbox`, `POST /outbox/{id}/published`) | `engine/bid3_engine/api.py` | `arkiv-worker/src/index.ts` |
 
-V4 firmware and bridge now use this same AUCTION serial contract. Each JOIN/LEAVE/BID is signed using the existing engine Bid3.Intent.v1 format; enable INTENT_SIGNATURES_REQUIRED and enroll the seat public keys. The engine remains the sole auction authority. V4 templates use a 10-second countdown; existing frozen auctions and the engine's 5-second seed default are not changed silently. V1 signatures do not include auctionId/epoch: one active lot and drained pending requests are required before switching lots. Cross-round replay protection remains a coordinated engine-contract follow-up.
+V5 firmware retains the V4 AUCTION serial contract and remains compatible with the existing bridge. Each JOIN/LEAVE/BID is signed using the existing engine Bid3.Intent.v1 format; enable INTENT_SIGNATURES_REQUIRED and enroll the seat public keys. The engine remains the sole auction authority. V5 templates use a 10-second countdown; existing frozen auctions and the engine's 5-second seed default are not changed silently. V1 signatures do not include auctionId/epoch: one active lot and drained pending requests are required before switching lots. Cross-round replay protection remains a coordinated engine-contract follow-up.
 
 Checks that catch drift:
 
@@ -130,6 +130,13 @@ With no env, the web app runs a labelled in-browser simulation and bundled sampl
 ---
 
 ## Changelog
+
+### 2026-11-06: V5 immediate OLED input feedback
+- User reports both tags now connect, but presses are discovered/displayed late. Added a session-HMAC input receipt from the button sampler and a dedicated gateway input task; the OLED can show BUTTON PRESSED / INPUT RECEIVED with count and DOWN/UP before ECDSA or engine ACKs.
+- Fixed standalone JOIN/LEAVE transport timeouts causing repeated reconnects: local RECEIVED is never auction admission. Engine reconnect requests signed re-announcement. Individually signed BID verification, engine authority, stale-quote policy, 10-second rules and bound OFF leader behavior remain.
+- Moved gateway ECDSA off the display core, added urgent OLED animation replacement and an 80 ms minimum press overlay, deferred missing-sensor retries while connected, and requested faster advertising/connection intervals. Preserved advertisement format, IDs/keys/NVS, startup melody, static tag LEDs and radar ring.
+- Added real-header input replay/session/press-release/OLED regression checks and urgent page-reset tests; updated documentation and source package. No engine, bridge or web runtime changes. Prepared as a standalone three-sketch archive and repository sources. The user explicitly authorized committing and pushing V5 to the existing firmware branch, overriding the normal Kev-only convention for this update.
+- Validation: all three sketches compiled; 11 sanitized C++ programs, 25 firmware/bridge Python checks, 31 engine tests and Arkiv schema checks passed. Physical RF/button-to-pixel timing remains unmeasured; no literal zero-latency guarantee. V4 bridge status compatibility is retained with an additional V5 firmware field.
 
 ### 2026-11-06: update firmware branch to V4 working BLE base
 - The user's explicit request authorizes committing and pushing this update to the existing firmware branch, overriding the normal Kev-only convention for this update.

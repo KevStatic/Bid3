@@ -37,7 +37,7 @@ public:
   if(!configure()){reset();return false;}ready=true;visible=false;transferring=false;return true;
  }
  bool canQueue()const{return ready&&!transferring;}
- void queueFrame(){if(!canQueue())return;memcpy(frame,screen.pixels,1024);page=0;transferring=true;}
+ void queueFrame(bool urgent=false){if(!ready||(!urgent&&transferring))return;memcpy(frame,screen.pixels,1024);page=0;transferring=true;}
  // One page per pass: no full-screen blocking flush in the animation/audio loop.
  bool service(){if(!ready||!transferring)return true;
   uint8_t cursor[]={uint8_t(0xB0|page),uint8_t(sh1106?2:0),0x10};

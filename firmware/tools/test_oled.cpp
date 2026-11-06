@@ -17,5 +17,12 @@ int main(){
  o.queueFrame();Wire.failSend=true;CHECK(!o.service());CHECK(!o.ready);Wire.failSend=false;
  // Bounce during the 180 ms settling period must restart that timer.
  CHECK(!o.probe(1520));Wire.powered=false;CHECK(!o.probe(1600));Wire.powered=true;CHECK(!o.probe(1680));CHECK(!o.probe(1760));CHECK(!o.probe(1840));CHECK(o.probe(1920));
+ // Urgent receipt must restart at page0 with the new frame, even mid-animation.
+ o.reset();Wire.powered=true;Wire.ackAddress=0x3C;
+ CHECK(!o.probe(2100));CHECK(!o.probe(2180));CHECK(!o.probe(2260));CHECK(o.probe(2340));
+ o.screen.clear();o.queueFrame();CHECK(o.service());CHECK(o.service());CHECK(!o.canQueue());
+ o.screen.pixel(0,0);o.queueFrame(true);size_t urgent=Wire.sent.size();CHECK(o.service());
+ CHECK(Wire.sent[urgent].data[1]==0xB0);CHECK(Wire.sent[urgent+1].data[1]==1);
+ for(unsigned i=1;i<8;++i)CHECK(o.service());CHECK(o.canQueue());
  printf("OLED switch/recovery: %u checks passed (mock I2C)\n",count);
 }

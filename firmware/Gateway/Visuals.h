@@ -10,11 +10,13 @@
 #include "Config.h"
 struct TagView {
   bool seen=false,verified=false,valid=false,moving=false;
+  uint32_t inputGeneration=0,inputCount=0,inputAt=0;bool inputKnown=false;
   bool buttonKnown=false,buttonHeld=false;uint32_t buttonCount=0;
   int rssi=-127; uint32_t lastRadio=0,lastProof=0,count=0;
   uint8_t history[20]={0};uint8_t historyCount=0;
 };
 struct View {
+  bool inputActive=false;uint8_t inputTag=0;uint32_t inputAt=0;
   bool sold=false;uint8_t winner=0;uint64_t hammerPrice=0;
   TagView tags[2];uint32_t proofs=0,errors=0,eventAt=0;uint8_t event=0,eventTag=0;
   char phase[22]="BOOTING",digest[17]="----------------"; bool fatal=false,radioReady=false;
@@ -34,6 +36,15 @@ struct Canvas {
     x+=6*scale;}}
   void center(int y,const char *s,int scale=1){text((128-int(strlen(s))*6*scale+scale)/2,y,s,scale);}
 };
+// Apply only current-session, recent receipts. Release updates cannot erase an engine result.
+inline bool applyInput(View&v,unsigned tag,uint32_t generation,uint32_t count,bool held,uint32_t at,uint32_t now){
+ if(tag>=2||!count||uint32_t(now-at)>500)return false;
+ auto&t=v.tags[tag];if(t.inputGeneration!=generation){t.inputGeneration=generation;t.inputCount=0;t.inputKnown=false;}
+ if(count<t.inputCount)return false;
+ bool pressed=count>t.inputCount;t.inputCount=count;t.inputKnown=true;t.buttonKnown=true;t.buttonHeld=held;t.buttonCount=count;
+ if(pressed){t.inputAt=at;v.inputActive=true;v.inputTag=tag+1;v.inputAt=now;v.event=6;v.eventTag=tag+1;v.eventAt=now;}
+ return pressed;
+}
 inline bool fresh(const TagView&t,uint32_t now){return t.verified&&uint32_t(now-t.lastProof)<Config::FRESH_MS;}
 // Canonical Ethereum facets for a rotating, thin 3D mark.
 // Checker shading distinguishes facets on the monochrome OLED without distortion.
@@ -72,6 +83,17 @@ inline void bars(Canvas&c,int x,int y,int rssi){int n=rssi>-50?4:rssi>-65?3:rssi
 inline void drawVisual(Canvas&c,const View&v,uint32_t now,uint32_t sincePower,const char*location){
   c.clear();char b[40];float t=now*.001f;(void)location;
   if(v.fatal){c.center(4,"SYSTEM CHECK FAILED");diamond(c,64,31,t,15);c.center(55,"SEE SERIAL MONITOR");return;}
+  if((v.inputActive&&uint32_t(now-v.inputAt)<80)||(v.event==6&&uint32_t(now-v.eventAt)<1400)){
+    c.center(2,"BUTTON PRESSED");
+    bool both=v.tags[0].inputKnown&&v.tags[1].inputKnown&&uint32_t(now-v.tags[0].inputAt)<150&&uint32_t(now-v.tags[1].inputAt)<150;
+    if(both)c.center(18,"TAG01 + TAG02");else{snprintf(b,sizeof(b),"TAG%02u",v.inputTag);c.center(15,b,2);}
+    for(unsigned i=0;i<2;++i){const auto&q=v.tags[i];
+      if(q.inputKnown)snprintf(b,sizeof(b),"%02u %s %lu",i+1,q.buttonHeld?"DOWN":"UP  ",(unsigned long)q.inputCount);
+      else snprintf(b,sizeof(b),"%02u --",i+1);
+      c.text(4,34+i*10,b);
+    }
+    c.center(56,"INPUT RECEIVED");return;
+  }
   if(sincePower<3800){
     for(int i=0;i<27;++i){int x=(i*37)%128,y=(int(now/30)+i*13)%64;c.pixel(x,y);if(i%3==0)c.pixel(x,y-1);}
     for(int i=0;i<5;++i){int y=45+int(std::fmod(t*12+i*5,20.f));c.line(0,y,127,y);}

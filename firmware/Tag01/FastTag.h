@@ -14,7 +14,7 @@ std::atomic<bool> fastActive(false),fastKeyReady(false),fastAdmitted(false),fast
 std::atomic<uint32_t> fastVersion(Fast::MISSING),fastControlAt(0);
 std::atomic<uint8_t> fastPhase(Fast::PAUSED);portMUX_TYPE fastLock=portMUX_INITIALIZER_UNLOCKED;
 uint8_t fastShared[32]={0},fastKey[32]={0},fastNonce[32]={0};bool fastCapable=false;
-uint32_t fastControlSeq=0,fastSequence=0;std::atomic<uint32_t> fastBeatSequence(0);
+uint32_t fastControlSeq=0,fastSequence=0;std::atomic<uint32_t> fastBeatSequence(0),fastInputSequence(0);
 FastPacket fastPending;bool fastWaiting=false;uint32_t fastWaitAt=0,fastSentAt=0;
 void fastFail(){fastActive.store(false);fastKeyReady.store(false);fastAdmitted.store(false);}
 bool fastSend(const uint8_t*p,size_t n){
@@ -30,14 +30,31 @@ void fastQueue(uint8_t kind,uint32_t count,uint32_t at,uint32_t version){
  if(!fastActive.load()||!fastInputs)return;FastPacket p;p.n=Fast::EVENT;fastBody(p.bytes,"B4E1",kind,count,at,kind==Fast::BID?version:Fast::MISSING);
  if(xQueueSend(fastInputs,&p,0)!=pdTRUE)fastFail();
 }
+// Runs in the button sampler, independently of ECDSA, sensor I/O and engine ACKs.
+void fastInputReceipt(const ButtonInput::Snapshot&button,uint32_t now,bool enabled){
+ static bool activeBefore=false,held=false;static uint32_t count=0,sentAt=0;static unsigned repeats=0;static FastPacket receipt;
+ if(!enabled){activeBefore=false;repeats=0;return;}
+ if(!activeBefore){activeBefore=true;count=button.count;held=button.pressed;return;}
+ if(button.count!=count||button.pressed!=held){
+  count=button.count;held=button.pressed;if(!count)return;
+  uint32_t seq=++fastInputSequence;if(!seq){fastFail();return;}
+  fastBody(receipt.bytes,"B5I1",Fast::PRESS,count,now,fastVersion.load());receipt.bytes[7]=held;Fast::put32(receipt.bytes+40,seq);
+  uint8_t keyCopy[32];portENTER_CRITICAL(&fastLock);memcpy(keyCopy,fastKey,32);portEXIT_CRITICAL(&fastLock);
+  if(!FastCrypto::mac(keyCopy,Fast::INPUT_DOMAIN,receipt.bytes,64))return;
+  repeats=3;sentAt=now-20;
+ }
+ // Repeat identical bytes briefly to tolerate notification loss; receiver deduplicates.
+ if(repeats&&uint32_t(now-sentAt)>=20){if(fastSend(receipt.bytes,Fast::INPUT_PACKET_SIZE))--repeats;sentAt=now;}
+}
 void fastSample(const ButtonInput::Snapshot&button,bool raw,uint32_t now){
  static bool lastRaw=false,wasActive=false,wasOn=true,switchRaw=true;static uint32_t switchAt=0;static uint32_t previousCount=0,lastBeat=0,edgeVersion=Fast::MISSING,edgeAt=0;static uint8_t edgePhase=Fast::PAUSED;static bool edgeAdmitted=false;
  bool on=digitalRead(SWITCH)==LOW,enabled=fastActive.load();if(on!=switchRaw){switchRaw=on;switchAt=now;}if(button.overflow){fastFail();return;}
+ fastInputReceipt(button,now,enabled);
  if(raw!=lastRaw){lastRaw=raw;if(raw){edgeAt=now;edgeVersion=fastVersion.load();edgePhase=fastPhase.load();edgeAdmitted=fastAdmitted.load();}}
  if(enabled&&!wasActive){previousCount=button.count;wasOn=on;switchRaw=on;switchAt=now;fastQueue(on?Fast::JOIN:Fast::LEAVE,button.count,now,Fast::MISSING);}
  if(enabled&&on!=wasOn&&uint32_t(now-switchAt)>=50){wasOn=on;if(!on)fastAdmitted.store(false);fastQueue(on?Fast::JOIN:Fast::LEAVE,button.count,now,Fast::MISSING);}
  if(enabled&&fastResync.exchange(false))fastQueue(on?Fast::JOIN:Fast::LEAVE,button.count,now,Fast::MISSING);
- if(enabled&&button.count>previousCount&&on){bool bid=edgeAdmitted&&edgeVersion!=Fast::MISSING&&(edgePhase==Fast::OPEN||edgePhase==Fast::COUNTDOWN);fastQueue(bid?Fast::BID:Fast::PRESS,button.count,edgeAt,edgeVersion);}
+ if(enabled&&button.count>previousCount&&on){bool bid=edgeAdmitted&&edgeVersion!=Fast::MISSING&&(edgePhase==Fast::OPEN||edgePhase==Fast::COUNTDOWN);if(bid)fastQueue(Fast::BID,button.count,edgeAt,edgeVersion);}
  previousCount=button.count;wasActive=enabled;
  if(enabled&&uint32_t(now-lastBeat)>=250){lastBeat=now;FastPacket p;fastBody(p.bytes,"B4H1",0,button.count,now,fastVersion.load());p.bytes[7]=on;
   uint32_t seq=++fastBeatSequence;if(!seq){fastFail();return;}Fast::put32(p.bytes+40,seq);
@@ -55,7 +72,7 @@ void fastPrepare(const uint8_t proof[199]){
  if(!fastCapable||fastActive.load())return;uint8_t derived[32];if(!FastCrypto::key(fastShared,proof,derived))return;
  fastActive.store(false);fastAdmitted.store(false);fastKeyReady.store(false);xQueueReset(fastInputs);xQueueReset(fastControls);
  portENTER_CRITICAL(&fastLock);memcpy(fastKey,derived,32);memcpy(fastNonce,proof+94,32);portEXIT_CRITICAL(&fastLock);
- fastControlSeq=0;fastSequence=0;fastBeatSequence.store(0);fastWaiting=false;fastVersion.store(Fast::MISSING);fastPhase.store(Fast::PAUSED);fastKeyReady.store(true);
+ fastControlSeq=0;fastSequence=0;fastBeatSequence.store(0);fastInputSequence.store(0);fastWaiting=false;fastVersion.store(Fast::MISSING);fastPhase.store(Fast::PAUSED);fastKeyReady.store(true);
 }
 class FastControlCallbacks:public BLECharacteristicCallbacks{
  void onWrite(BLECharacteristic*c)override{String s=c->getValue();if(s.length()!=Fast::CONTROL||!fastControls)return;
@@ -68,7 +85,7 @@ void fastCreate(BLEService*service){
 #if defined(CONFIG_BLUEDROID_ENABLED)
  fastChar->addDescriptor(new BLE2902());
 #endif
- const uint8_t version[4]={'B','4','F','1'};fastChar->setValue(version,sizeof(version));
+ const uint8_t version[4]={'B','5','F','1'};fastChar->setValue(version,sizeof(version));
 }
 void fastTick(){
  if(!fastCapable)return;
