@@ -141,6 +141,8 @@ def test_bridge_disconnect_pauses_the_round(client):
         assert client.get("/auctions/bid3-003").json()["state"]["phase"] == "PAUSED"  # paddles not back yet
         intent(bridge, kind="JOIN", tag="TAG1")
         intent(bridge, kind="LINK", tag="TAG2", link="OK")
+        assert client.get("/auctions/bid3-003").json()["state"]["phase"] == "PAUSED"
+        intent(bridge, kind="JOIN", tag="TAG2")
         time.sleep(0.1)
         state = client.get("/auctions/bid3-003").json()["state"]
         assert state["phase"] == "COUNTDOWN" and state["countdown"]["durationMs"] == 1_000
@@ -193,6 +195,21 @@ def test_operator_can_create_and_open_an_auction(client):
     assert client.get("/health").json()["activeAuctionId"] == "bid3-010"
     journal = client.get("/auctions/bid3-010/journal", headers=ADMIN).json()
     assert {e["kind"] for e in journal} >= {"CREATED", "OPENED"}
+
+
+def test_tag_fault_does_not_pause_healthy_bidder_over_bridge(client):
+    with client.websocket_connect("/bridge?token=bridge-secret") as bridge:
+        bridge.receive_json()
+        intent(bridge, kind="JOIN", tag="TAG1", session="t1", seq=1)
+        intent(bridge, kind="JOIN", tag="TAG2", session="t2", seq=1)
+        intent(bridge, kind="BID", tag="TAG1", session="t1", seq=2)
+        before = client.get("/auctions/bid3-003").json()["state"]
+        intent(bridge, kind="LINK", tag="TAG1", link="LOST")
+        state = client.get("/auctions/bid3-003").json()["state"]
+        assert state["phase"] == "COUNTDOWN" and state["countdown"] == before["countdown"]
+        assert state["paddles"][0]["status"] == "UNKNOWN"
+        assert intent(bridge, kind="BID", tag="TAG1", session="t1", seq=3)["result"] == "IGNORED"
+        assert intent(bridge, kind="BID", tag="TAG2", session="t2", seq=2, stateVersion=state["stateVersion"])["result"] == "ACCEPTED"
 
 
 def test_opening_an_auction_tells_the_connected_bridge(empty_client):

@@ -109,20 +109,61 @@ def test_duplicate_intents_count_once():
     assert a.bid_count == 2
 
 
-def test_signal_loss_pauses_and_never_awards():
+def test_tag_signal_loss_blocks_only_that_bidder_and_keeps_deadline():
     a = new_auction()
     a.join(0, "TAG1"), a.join(0, "TAG2")
     a.bid(10, "TAG1")
+    deadline = dict(a.countdown)
     a.link(1_000, "TAG2", ok=False)
-    assert a.phase == "PAUSED" and a.countdown is None
-    assert a.tick(99_999).changed is False and a.phase == "PAUSED"
-    assert a.resync(100_000).changed is False  # still lost
-
-    a.link(100_000, "TAG2", ok=True)
-    assert a.resync(100_000).changed
-    assert a.phase == "COUNTDOWN" and a.countdown["deadlineMs"] == 105_000  # full countdown restart
-    a.tick(105_000)
+    assert a.phase == "COUNTDOWN" and a.countdown == deadline
+    assert a.seat_by_tag("TAG2").status == "UNKNOWN"
+    assert a.bid(1_001, "TAG2").ack == "IGNORED"
+    a.tick(5_010)
     assert a.phase == "SOLD_LOCKED" and a.result["winnerAlias"] == "A1"
+
+
+def test_tag_recovery_needs_join_and_does_not_restart_countdown():
+    a = new_auction()
+    a.join(0, "TAG1"), a.join(0, "TAG2")
+    a.bid(10, "TAG1")
+    deadline = dict(a.countdown)
+    a.link(1_000, "TAG2", ok=False)
+    a.link(2_000, "TAG2", ok=True)
+    assert a.seat_by_tag("TAG2").status == "UNKNOWN"
+    assert a.bid(2_001, "TAG2").ack == "IGNORED"
+    assert a.join(2_100, "TAG2").ack == "ACCEPTED"
+    assert a.countdown == deadline
+    assert a.bid(2_200, "TAG2", state_version=a.state_version).ack == "ACCEPTED"
+    assert a.countdown["deadlineMs"] == 7_200
+
+
+def test_lost_leaders_accepted_bid_stays_binding():
+    a = new_auction()
+    a.join(0, "TAG1"), a.join(0, "TAG2")
+    a.bid(10, "TAG1")
+    a.link(1_000, "TAG1", ok=False)
+    a.tick(5_010)
+    assert a.phase == "SOLD_LOCKED" and a.result["winnerAlias"] == "A1"
+
+
+def test_other_bidder_can_bid_when_competitor_loses_signal():
+    a = new_auction()
+    a.join(0, "TAG1"), a.join(0, "TAG2")
+    a.link(1, "TAG1", ok=False)
+    assert a.phase == "OPEN"
+    assert a.bid(10, "TAG2", state_version=a.state_version).ack == "ACCEPTED"
+    a.tick(5_010)
+    assert a.result["winnerAlias"] == "B2"
+
+
+def test_fault_without_accepted_bid_never_fabricates_winner():
+    a = new_auction(time_limit_ms=60_000)
+    a.join(0, "TAG1"), a.join(0, "TAG2")
+    a.link(1, "TAG1", ok=False)
+    a.tick(5_001)
+    assert a.result is None and a.phase == "OPEN"
+    a.tick(60_000)
+    assert a.phase == "UNSOLD"
 
 
 def test_bridge_down_pauses_and_paddles_must_reannounce():

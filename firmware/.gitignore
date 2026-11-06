@@ -1,0 +1,17 @@
+# Local environments, caches and device build products
+.DS_Store
+__pycache__/
+*.py[cod]
+.venv/
+.build/
+build/
+.cache/
+.env
+.env.*
+*.bin
+*.elf
+*.hex
+*.map
+*.o
+*.a
+*.zip

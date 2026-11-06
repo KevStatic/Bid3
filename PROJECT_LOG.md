@@ -12,7 +12,7 @@ A live auction run with physical paddle tags, built for **ETHGlobal Mumbai (Nov 
 - **Switch ON** joins the room and **switch OFF** leaves (the bidder stays eligible to come back).
 - **Press BID** to bid the next price. Each accepted bid adds **5%** (exact integer maths) and restarts a short **hammer countdown** ("going once, going twice, sold").
 - When the countdown ends, the **leader wins**. The leader switching off doesn't withdraw their bid.
-- If a paddle, the bridge or the gateway drops out, the round **pauses**. Nothing is ever awarded while the room is uncertain.
+- A tag-specific fault blocks only that bidder; healthy bidders continue. Gateway/bridge/engine-wide outages **pause** the room. Accepted bids remain binding after OFF or a tag fault.
 - Every listing, bid and result is a public **Arkiv entity**, readable without our server. Payment is simulated (demo credits).
 
 ## 2. Key decisions (don't reverse without telling the team)
@@ -25,7 +25,7 @@ A live auction run with physical paddle tags, built for **ETHGlobal Mumbai (Nov 
 | Button | **Press = bid at the next step** (not a jump bid on a running clock) | engine `auction.py` |
 | Leader switches OFF | **Bid stays binding**; they can still win | engine `auction.py` |
 | Step | **+5% per bid** (500 bps), configurable per auction | rules |
-| Countdown | 5 s default (demo seed uses `SEED_COUNTDOWN_MS`); 8–10 s if hardware latency needs it | engine env |
+| Countdown | V6 hardware rounds use 10 s via published countdownMs=10000; unchanged engine seed defaults to 5 s unless SEED_COUNTDOWN_MS=10000 | auction rules / engine env |
 | Stale presses | A press whose `stateVersion` predates the latest bid is refused as `STALE` | engine + firmware |
 | Frontend | Next.js 16 on Vercel | `web/` |
 | Backend | FastAPI engine + Python bridge on the laptop + TypeScript Arkiv worker | `engine/`, `bridge/`, `arkiv-worker/` |
@@ -43,13 +43,14 @@ engine/         FastAPI auction engine: single authority for order, price, count
 bridge/         Laptop program: gateway USB serial <-> engine WebSocket (+ fake gateway for tests)
 arkiv-worker/   Drains the engine outbox into Arkiv entities with the publisher wallet
 arkiv/          Arkiv prize write-ups (schema.md done; friction, reach, why-arkiv, how-you-use-arkiv to do)
+firmware/       V6 Arduino tag/gateway sources, wiring/protocol docs and hardware validation (firmware branch)
 PROJECT_LOG.md  This file
 AGENTS.md       Pointer for AI tools: read this log first
 ```
 
 **Branches**
 - `main`: web, engine, bridge, arkiv-worker, arkiv docs, this log.
-- `firmware`: Arduino C++ for the tags and gateway, being reworked. It was branched from `1870e89`, before the backend landed, so it doesn't yet have this log or `bridge/README.md`. Merge `main` into `firmware` so firmware work can see the serial protocol spec and the log.
+- `firmware`: V6 Arduino C++ sources in `firmware/`, rebuilt from the owner-tested working BLE archive. The canonical `bridge/` now matches the AUCTION serial contract at 115200 baud. V2, V4 and V5 are retained in Git history. See `firmware/README.md` for scope and remaining bench acceptance.
 
 **Who works where:** each component may be handled by a separate AI chat in the Claude Project "EthGlobal Hackathon" (engine, bridge, arkiv-worker, web, firmware). Every chat reads this log first, works only in its own folder or branch, changes a contract in section 4 only together with the other side, and adds a changelog entry here.
 
@@ -64,8 +65,10 @@ Planning documents (outside the repo): `/Users/kev/Hackathons/EthGlobal/Plans/`.
 | Rules hash (sha256 of canonical JSON, fixed key order) | `web/src/lib/rules-hash.ts` | `engine/bid3_engine/rules_hash.py` |
 | Transcript digest (sha256 of bids sorted by `bidIndex`, sorted keys, non-ASCII escaped like Python's `json.dumps`) | `web/src/lib/transcript-digest.ts` | `engine/bid3_engine/auction.py` (`transcript_digest`) |
 | Arkiv entity schemas (5 types) | `web/src/lib/arkiv/schemas.ts` | `arkiv-worker/src/schemas.ts` (identical copy) |
-| Serial protocol (`AUCTION_EVENT_JSON=`, `AUCTION_STATE_JSON=`, `AUCTION_ACK_JSON=`, `CMD=STATUS`) | `bridge/README.md` | gateway firmware |
+| Serial protocol (115200; AUCTION_EVENT/STATE/ACK_JSON, session-correlated ACKs, AUCTION_STATUS/BRIDGE_JSON, CMD=STATUS) | `bridge/README.md` | gateway firmware |
 | Outbox (`GET /outbox`, `POST /outbox/{id}/published`) | `engine/bid3_engine/api.py` | `arkiv-worker/src/index.ts` |
+
+V6 firmware retains the V4 AUCTION serial contract and remains compatible with the existing bridge. Each JOIN/LEAVE/BID is signed using the existing engine Bid3.Intent.v1 format; enable INTENT_SIGNATURES_REQUIRED and enroll the seat public keys. The engine remains the sole auction authority. V6 templates use a 10-second countdown; existing frozen auctions and the engine's 5-second seed default are not changed silently. V1 signatures do not include auctionId/epoch: one active lot and drained pending requests are required before switching lots. Cross-round replay protection remains a coordinated engine-contract follow-up.
 
 Checks that catch drift:
 
@@ -101,7 +104,7 @@ With no env, the web app runs a labelled in-browser simulation and bundled sampl
 
 **Open, roughly in priority order**
 
-1. **Gateway firmware** (branch `firmware`): emit `AUCTION_EVENT_JSON=` for switch ON/OFF (JOIN/LEAVE) and button (BID); answer `CMD=STATUS`. Optionally drive the OLED, LEDs and buzzer from `AUCTION_STATE_JSON=`. Spec in `bridge/README.md`.
+1. **V4 firmware/bridge follow-up** (branch `firmware`): source/serial/canonical-signature alignment is implemented. Verify real hardware and enable required enrolled signatures on the deployed engine. Keep one active auction and drain outstanding intents before changing it; round-bound signatures remain future coordinated work.
 2. **Real-hardware round:** run engine + bridge + web against the real gateway; measure press-to-ack latency and confirm the countdown length.
 3. **Arkiv:**
    - Create and fund the publisher wallet; get an access key.
@@ -241,6 +244,34 @@ With no env, the web app runs a labelled in-browser simulation and bundled sampl
 - **Featured lot read at runtime:** new `web/src/lib/use-featured-auction.ts` fetches the engine's `GET /health` `activeAuctionId` (falls back to `NEXT_PUBLIC_FEATURED_AUCTION_ID`). Used by the home page (`featured-live.tsx`), header, seat page and seller link. `engineHttpUrl` now derives from the WS URL when unset.
 - **Checked:** `tsc --noEmit` and `eslint` pass in `web/`. Not re-run: engine tests, worker typecheck (no `node_modules` there), live Arkiv reads.
 - **Still open (not done here):** set `SEED_DEMO=0` on Railway and open a fresh lot before the demo (the seeded lot closes UNSOLD after 10 min); set all three tokens on Railway; ~~the engine logs the bridge URL including `token=`; gateway isn't told when a new lot opens~~ (both fixed in the entry above); seller "Open the round" still unwired and the seller flow still writes `auctionId` of the featured lot, so a test listing can replace its title; docs (`arkiv/*.md`, root README, Track row); `web/README.md` is stale about `/open` and `POST /items`; explorer URL format unconfirmed.
+
+### 2026-11-06: V6 OFF/LOST availability and isolated tag faults
+- Fixed the gateway's unconditional live-link freshness refresh: an authenticated heartbeat switch flag now controls OFF availability, radar presence and input gating. OFF is distinct from LOST; an established-session disconnect/timeout no longer stays available for the legacy 25-second proof window.
+- Kept the V5 button path, audio, static LEDs, wiring, keys/NVS, advertisement format, pricing and accepted-bid binding. Debounced switch transitions send immediate state; OFF/ON generations discard unsent pre-OFF intents without sequence gaps. In-flight decisions remain authoritative at the engine.
+- User confirmed: OFF/LOST blocks future bids; accepted bids remain binding; tag-specific faults isolate only that bidder; tag recovery requires a fresh JOIN and does not reset the live countdown. Infrastructure-wide pause/recovery is unchanged.
+- Updated engine/bid3_engine/auction.py and its tests for isolated UNKNOWN seats and admission on recovery. Wire fields/signatures, bridge runtime, web frontend and Arkiv schemas are unchanged. Added OFF/LOST renderer, timestamp-order and heartbeat regressions and a deployable engine patch alongside the three-sketch package.
+- Validation: three target builds passed, 12 sanitized C++ programs and 25 firmware/bridge Python tests passed, 36 engine tests passed and Arkiv schemas match. Physical RF/switch-to-pixel behavior is not bench-tested here. The user explicitly authorized committing and pushing V6 to the existing firmware branch, overriding the normal Kev-only convention for this update. No cloud deployment or device flash is performed.
+
+### 2026-11-06: V5 immediate OLED input feedback
+- User reports both tags now connect, but presses are discovered/displayed late. Added a session-HMAC input receipt from the button sampler and a dedicated gateway input task; the OLED can show BUTTON PRESSED / INPUT RECEIVED with count and DOWN/UP before ECDSA or engine ACKs.
+- Fixed standalone JOIN/LEAVE transport timeouts causing repeated reconnects: local RECEIVED is never auction admission. Engine reconnect requests signed re-announcement. Individually signed BID verification, engine authority, stale-quote policy, 10-second rules and bound OFF leader behavior remain.
+- Moved gateway ECDSA off the display core, added urgent OLED animation replacement and an 80 ms minimum press overlay, deferred missing-sensor retries while connected, and requested faster advertising/connection intervals. Preserved advertisement format, IDs/keys/NVS, startup melody, static tag LEDs and radar ring.
+- Added real-header input replay/session/press-release/OLED regression checks and urgent page-reset tests; updated documentation and source package. No engine, bridge or web runtime changes. Prepared as a standalone three-sketch archive and repository sources. The user explicitly authorized committing and pushing V5 to the existing firmware branch, overriding the normal Kev-only convention for this update.
+- Validation: all three sketches compiled; 11 sanitized C++ programs, 25 firmware/bridge Python checks, 31 engine tests and Arkiv schema checks passed. Physical RF/button-to-pixel timing remains unmeasured; no literal zero-latency guarantee. V4 bridge status compatibility is retained with an additional V5 firmware field.
+
+### 2026-11-06: update firmware branch to V4 working BLE base
+- The user's explicit request authorizes committing and pushing this update to the existing firmware branch, overriding the normal Kev-only convention for this update.
+- Replaced V2 hardware sources with V4 from the exact owner-tested button archive. Original advertisements, discovery, NVS identities, enrolled proofs, startup melody and wiring remain; fast authenticated notifications activate only after original proof verification. Tag LEDs stay static; the radar outer ring is complete.
+- Updated the single canonical bridge implementation for 115200 AUCTION messages, session-correlated ACKs, running-gateway status, WebSocket liveness, active-lot re-announcement and immediate serial line delivery. No engine/web/Arkiv runtime code is changed.
+- Added bidding rules, a 10-second enrolled auction template, fast protocol documentation, baseline helper hashes, updated shared-copy/checksum checks and CI covering bridge/engine compatibility. Archives, generated binaries and local logs are excluded from Git.
+- Validation: all three delivered V4 sketches compiled with core 3.3.12; repo host checks, engine tests, schema drift and firmware CI/build tooling are checked before push. Physical RF/latency/LED/acoustic acceptance remains open; no zero-latency claim. Engine v1 cross-round binding remains outside this release.
+
+### 2026-11-06: import V2 hardware firmware and repeatable validation
+- Added `firmware/` from the matching owner-supplied V2 folder/ZIP: Tag01, Tag02, Gateway, canonical shared headers, wiring/protocol docs, previews, font attribution and host regressions.
+- Cleaned up tag packet initialization and guarded Bluedroid-only notification descriptors; public enrollment pins, NVS identities and wiring are preserved.
+- Added checksum/shared-copy validation, pinned host test dependencies, pinned Arduino CLI/core build checks and a hardware-only GitHub Actions workflow. Generated binaries, archives, environments and caches are ignored.
+- Scope: hardware source/tooling/docs only, plus this hardware status entry. No web, bridge, engine, Arkiv or worker implementation changes.
+- Validation and remaining physical acceptance are recorded in `firmware/VALIDATION.md`. V2 bridge/engine interoperability remains open; the original backend serial contract is unchanged.
 
 ### 2026-11-06 ~10:05 IST: firmware branch and multi-chat setup
 - **New branch:** `firmware` (on origin), for Arduino C++ tag and gateway firmware. No firmware changes pushed yet; the team is reworking the code.
