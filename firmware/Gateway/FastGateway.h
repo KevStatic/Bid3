@@ -24,12 +24,16 @@ std::atomic<uint32_t> roomAt(0),roomVersion(Fast::MISSING);std::atomic<uint8_t> 
 std::atomic<bool> engineUp(false),roomDirty(false);std::atomic<uint64_t> roomNext(0);
 std::atomic<bool> fxPowered(false),fxFatal(false),fxActive(false),fxSensorWarning(false),fxActiveModule(false),fxActiveLow(false);
 std::atomic<unsigned> fxFresh(0);QueueHandle_t fxQueue=nullptr;
-struct FxRequest{uint8_t kind,tag;};
+std::atomic<uint32_t> fxLossEpoch[2]={{0},{0}};
+struct FxRequest{uint8_t kind,tag;uint32_t epoch;};
+bool cosmeticOnline(unsigned tag){auto&s=fastSlots[tag];return s.live.load()&&s.auth.load()&&uint32_t(millis()-s.lastAt.load())<1500;}
 void queueSound(Audio::Kind kind,uint8_t tag=0){if((kind==Audio::NEARBY||kind==Audio::VERIFIED)&&roomVersion.load()!=Fast::MISSING&&(roomPhase.load()==Fast::OPEN||roomPhase.load()==Fast::COUNTDOWN||roomPhase.load()==Fast::CLOSED))return;
- if(!fastFeature.load()){sound.request(kind,tag);return;}if(!fxQueue)return;FxRequest f{uint8_t(kind),tag};if(xQueueSend(fxQueue,&f,0)!=pdTRUE)Serial.println("BID3_FEEDBACK_ERROR=queue_full");}
+ if(!fastFeature.load()){sound.request(kind,tag);return;}if(!fxQueue)return;uint32_t epoch=tag>=1&&tag<=2?fxLossEpoch[tag-1].load():0;
+ if(FastFeedback::cosmetic(kind)&&tag>=1&&tag<=2&&!FastFeedback::allow(kind,epoch,epoch,cosmeticOnline(tag-1)))return;
+ FxRequest f{uint8_t(kind),tag,epoch};if(xQueueSend(fxQueue,&f,0)!=pdTRUE)Serial.println("BID3_FEEDBACK_ERROR=queue_full");}
 void fastLink(int tag,const char*state){Serial.printf("BID3_LINK tag=TAG%d state=%s\n",tag+1,state);}
 void fastLinkEvent(int tag,bool ok){Serial.printf("AUCTION_EVENT_JSON={\"kind\":\"LINK\",\"tag\":\"TAG%d\",\"link\":\"%s\"}\n",tag+1,ok?"OK":"LOST");}
-void fastDrop(int tag){auto&s=fastSlots[tag];bool had=s.live.exchange(false);s.auth.store(false);if(had){fastLink(tag,"LOST");fastLinkEvent(tag,false);}}
+void fastDrop(int tag){auto&s=fastSlots[tag];bool had=s.live.exchange(false);s.auth.store(false);if(had){fxLossEpoch[tag].fetch_add(1);fastLink(tag,"LOST");fastLinkEvent(tag,false);}}
 void fastNotify(int tag,uint8_t*p,size_t n){
  if(!fastSlots[tag].live.load()||(n!=Fast::EVENT&&n!=Fast::HEARTBEAT))return;
  FastRx e;e.tag=tag;e.n=n;e.at=millis();memcpy(e.bytes,p,n);
@@ -67,12 +71,15 @@ bool fastControl(int tag,Fast::Command kind,uint32_t ref=0,uint8_t result=Fast::
 }
 void fastCheckWrites(uint32_t now){for(int t=0;t<2;++t){uint32_t h=fastWriteHandle[t].load();if(h!=UINT32_MAX&&uint32_t(now-fastWriteAt[t].load())>1500&&fastWriteHandle[t].exchange(UINT32_MAX)!=UINT32_MAX)esp_ble_gattc_close(esp_gatt_if_t(h>>16),uint16_t(h));}}
 void fastFeedbackTask(void*){
+ uint32_t cancelledEpoch[2]={0,0};
  for(;;){
   if(sound.activeModule!=fxActiveModule.load()||sound.activeLow!=fxActiveLow.load()){sound.stop();sound.activeModule=fxActiveModule.load();sound.activeLow=fxActiveLow.load();}
+  for(unsigned tag=0;tag<2;++tag){uint32_t epoch=fxLossEpoch[tag].load();if(epoch!=cancelledEpoch[tag]){sound.player.cancelCosmetic(tag+1);cancelledEpoch[tag]=epoch;}}
   FxRequest r;if(xQueuePeek(fxQueue,&r,0)==pdTRUE&&(!FastFeedback::outcome(sound.player.current.kind)||r.kind==Audio::NONE)){
    xQueueReceive(fxQueue,&r,0); // Finish an outcome cue before playing another bidder's cue.
-   if(r.kind==Audio::NONE||r.kind==Audio::BID_ACCEPTED||r.kind==Audio::BID_REJECTED||r.kind==Audio::SOLD)sound.stop();
-   if(r.kind!=Audio::NONE)sound.request(Audio::Kind(r.kind),r.tag);
+   bool allowed=r.tag<1||r.tag>2||FastFeedback::allow(Audio::Kind(r.kind),r.epoch,fxLossEpoch[r.tag-1].load(),cosmeticOnline(r.tag-1));
+   if(allowed){if(r.kind==Audio::NONE||r.kind==Audio::BID_ACCEPTED||r.kind==Audio::BID_REJECTED||r.kind==Audio::SOLD)sound.stop();
+    if(r.kind!=Audio::NONE)sound.request(Audio::Kind(r.kind),r.tag);}
   }
   uint32_t now=millis();sound.tick(now,fxPowered.load()&&!fxFatal.load());
   auto duty=RuntimePolicy::leds(now,fxPowered.load(),fxFatal.load(),fxActive.load()&&!(roomVersion.load()!=Fast::MISSING&&roomPhase.load()==Fast::PAUSED),fxFresh.load(),fxSensorWarning.load(),false,Config::GREEN_DUTY_MAX,Config::RED_DUTY_MAX);
@@ -173,7 +180,7 @@ void fastWorker(void*){
    }else forwardFastEvent(e.tag,e.bytes);
   }
   uint32_t lastRoom=roomAt.load(),now=millis();
-  if(uint32_t(now-lastStatus)>=500){lastStatus=now;Serial.printf("AUCTION_STATUS_JSON={\"build\":\"V4_WORKING_BASE\",\"firmware\":\"V6_TAG_OFF_FIX\",\"running\":true,\"tag1_fast\":%u,\"tag2_fast\":%u,\"tag1_proof_seen\":%u,\"tag2_proof_seen\":%u}\n",fastSlots[0].auth.load(),fastSlots[1].auth.load(),fastSlots[0].proofSeen.load(),fastSlots[1].proofSeen.load());}if(engineUp.load()&&uint32_t(now-lastRoom)>1500){engineUp.store(false);roomPhase.store(Fast::PAUSED);}
+  if(uint32_t(now-lastStatus)>=500){lastStatus=now;Serial.printf("AUCTION_STATUS_JSON={\"build\":\"V4_WORKING_BASE\",\"firmware\":\"V6_RECONNECT_FEEDBACK_FIX\",\"running\":true,\"tag1_fast\":%u,\"tag2_fast\":%u,\"tag1_proof_seen\":%u,\"tag2_proof_seen\":%u}\n",fastSlots[0].auth.load(),fastSlots[1].auth.load(),fastSlots[0].proofSeen.load(),fastSlots[1].proofSeen.load());}if(engineUp.load()&&uint32_t(now-lastRoom)>1500){engineUp.store(false);roomPhase.store(Fast::PAUSED);}
   bool controlDue=roomDirty.exchange(false)||uint32_t(now-lastControl)>=200;
   for(int t=0;t<2;++t){auto&s=fastSlots[t];if(!s.live.load())continue;
    uint32_t heard=s.lastAt.load();now=millis();if(!clients[t]->isConnected()||uint32_t(now-heard)>(s.auth.load()?1500u:8000u)){fastDrop(t);FastGuard io(s.io);if(clients[t]->isConnected())clients[t]->disconnect();continue;}

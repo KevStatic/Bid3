@@ -131,6 +131,12 @@ With no env, the web app runs a labelled in-browser simulation and bundled sampl
 
 ## Changelog
 
+### 2026-11-07: publish the user's final V6 reconnect archive
+- The user explicitly requested uploading only Downloads/JOB/Bid3_Firmware_V6_ReconnectFix_2026-11-06.zip to origin/firmware, authorizing this commit/push over the usual Kev-only convention. Archive SHA-256: 4e1fc3857d6c9bfe2a1493ca6ffcaa0968ee7baa1f33db830a73ebd12cfce727.
+- Imported the supplied V6_RECONNECT_FEEDBACK_FIX gateway, Tag01, Tag02, canonical shared headers, regression and documentation. Every board/shared source is byte-identical to the archive. The separate local verification-timing experiment is not included.
+- Kept the existing canonical bridge/engine and repository validation/dependency paths; verified the archive's duplicate bridge and engine runtime source already match those canonical files. Adapted documentation links and regenerated the repository checksum manifest. No backend/web runtime or cloud/device deployment change.
+- Verified archive integrity, all source checksums/shared copies, 13 sanitized C++ programs, 23 firmware + 2 bridge Python tests and all 44 engine tests before push. GitHub board CI is checked afterward. Physical RF/acoustic acceptance remains unchanged.
+
 ### 2026-11-06: prepare V6 firmware pull request against current main
 - Merged main's deploy/demo hardening into firmware before creating the requested pull request. Preserved the latest port 8010 defaults, token enforcement/redaction, new-lot broadcast fix, seller/Arkiv work and all project-log entries.
 - Resolved append-only conflicts in PROJECT_LOG.md and engine/tests/test_api.py by retaining both V6 fault-isolation regressions and main's new-auction notification tests. Firmware source/keys/wiring are unchanged.
