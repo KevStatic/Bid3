@@ -10,17 +10,51 @@ import { phaseHeadline, priceLabel } from "@/components/auction/phase-copy";
 import { PriceDisplay } from "@/components/auction/price-display";
 import { Button, Container, LotTag, Panel, Skeleton, SourceBadge } from "@/components/ui";
 import { formatMinor, percentFromBps, secondsLabel } from "@/lib/format";
+import type { Phase } from "@/lib/types";
 import { useAuctionStream, useCountdown } from "@/lib/use-auction-stream";
 import { useLatestSnapshot, useListingByAuction } from "@/lib/use-arkiv";
+import { useEngineHealth } from "@/lib/use-featured-auction";
 import { SimulationControls } from "./simulation-controls";
 
-export function RoomView({ auctionId }: { auctionId: string }) {
+const CLOSED_PHASES: ReadonlySet<Phase> = new Set<Phase>(["SOLD_LOCKED", "UNSOLD", "CANCELLED"]);
+
+export function RoomView({ auctionId: requestedId }: { auctionId: string }) {
+  // The lot this room follows. It starts as the one in the URL. If this page watched that lot live
+  // and the engine opens a new one after it closes, the room moves to the new lot in place, without
+  // a page navigation, so a big screen (even in full screen) keeps up without anyone touching it.
+  // Someone who opens an old lot's room (from Results, say) gets a link to the live lot instead.
+  const [auctionId, setAuctionId] = useState(requestedId);
+  const [watchedLive, setWatchedLive] = useState(false);
+  const [requested, setRequested] = useState(requestedId);
+  if (requested !== requestedId) {
+    setRequested(requestedId);
+    setAuctionId(requestedId);
+    setWatchedLive(false);
+  }
+
   const stream = useAuctionStream(auctionId);
   const { state, bids, source, connection, clockOffsetMs, simulator, lastBidSeq } = stream;
+  // Until the new lot's first snapshot arrives, the state on screen still belongs to the old lot,
+  // so everything shown alongside it (title, snapshot, links) uses the state's own auctionId.
+  const shownId = state?.auctionId ?? auctionId;
   const msLeft = useCountdown(state, clockOffsetMs);
-  const listing = useListingByAuction(auctionId);
+  const listing = useListingByAuction(shownId);
   const streamDown = source === "engine" && connection !== "open";
-  const snapshot = useLatestSnapshot(auctionId, streamDown);
+  const snapshot = useLatestSnapshot(shownId, streamDown);
+
+  const activeAuctionId = useEngineHealth().data?.activeAuctionId ?? null;
+  const current = !!state && state.auctionId === auctionId;
+  const closed = current && CLOSED_PHASES.has(state.phase);
+  if (current && !closed && !watchedLive) setWatchedLive(true);
+  const newerLot = closed && activeAuctionId && activeAuctionId !== auctionId ? activeAuctionId : null;
+  if (newerLot && watchedLive) setAuctionId(newerLot);
+
+  useEffect(() => {
+    // Keep the address bar on the lot being followed. The native history API updates the URL
+    // without a navigation, so the room isn't remounted and full screen survives.
+    const path = `/room/${encodeURIComponent(auctionId)}`;
+    if (window.location.pathname !== path) window.history.replaceState(null, "", path);
+  }, [auctionId]);
 
   const stageRef = useRef<HTMLDivElement>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -68,7 +102,7 @@ export function RoomView({ auctionId }: { auctionId: string }) {
         </div>
 
         <h1 className="mt-4 max-w-4xl text-2xl font-bold sm:text-4xl">
-          {lot?.title ?? (listing.isLoading ? <Skeleton className="h-10 w-2/3" /> : `Auction ${auctionId}`)}
+          {lot?.title ?? (listing.isLoading ? <Skeleton className="h-10 w-2/3" /> : `Auction ${shownId}`)}
         </h1>
 
         <div className="mt-8 grid gap-10 lg:mt-10 lg:grid-cols-[minmax(0,1fr)_20rem] lg:gap-14">
@@ -133,6 +167,15 @@ export function RoomView({ auctionId }: { auctionId: string }) {
           </aside>
         </div>
 
+        {newerLot && !watchedLive ? (
+          <div className="mt-8 rounded-panel border border-cobalt/40 bg-cobalt-soft px-4 py-3 text-sm" role="status">
+            <p className="font-semibold">This lot has closed. A newer lot is live now.</p>
+            <Link href={`/room/${encodeURIComponent(newerLot)}`} className="mt-0.5 inline-block font-semibold text-cobalt hover:underline">
+              Go to the live room
+            </Link>
+          </div>
+        ) : null}
+
         {streamDown ? (
           <div className="mt-8 rounded-panel border border-halt/40 bg-halt-soft px-4 py-3 text-sm" role="alert">
             <p className="font-semibold text-halt">Reconnecting to the room…</p>
@@ -153,7 +196,7 @@ export function RoomView({ auctionId }: { auctionId: string }) {
         <Panel>
           <div className="flex items-center justify-between border-b border-line px-5 py-4">
             <h2 className="text-base font-bold">Bids</h2>
-            <Link href={`/auction/${encodeURIComponent(auctionId)}/bids`} className="text-sm font-semibold text-cobalt hover:underline">
+            <Link href={`/auction/${encodeURIComponent(shownId)}/bids`} className="text-sm font-semibold text-cobalt hover:underline">
               Full history on Arkiv
             </Link>
           </div>
