@@ -26,6 +26,12 @@ class Player {
 public:
  Request current;uint16_t hz=0;
  void stop(){used=0;index=0;current={};hz=0;}
+ // Called only by the feedback owner. Preserve startup and auction outcomes.
+ void cancelCosmetic(uint8_t tag){
+  auto matches=[&](const Request&r){return r.tag==tag&&(r.kind==NEARBY||r.kind==VERIFIED);};
+  uint8_t kept=0;for(uint8_t i=0;i<used;++i)if(!matches(queue[i]))queue[kept++]=queue[i];used=kept;
+  if(matches(current)){current={};index=0;hz=0;}
+ }
  bool busy()const{return current.kind!=NONE||used;}
  bool request(Kind kind,uint8_t tag=0){
   if(kind==NONE)return false;

@@ -12,6 +12,12 @@ Use **Espressif ESP32 core 3.3.12** and **Arduino CLI 1.5.1** for repeatable bui
 
 ## V6 OFF / LOST correction
 
+### V6 reconnect feedback patch
+
+The gateway now keeps arrival/proof sound history independent of OLED availability. Clearing a LOST tag's radar presence cannot turn every reconnect advertisement into a new arrival sound. Connection loss cancels that tag's playing/queued discovery chirps and invalidates older cosmetic requests, including requests delayed until after recovery. Reconnect cosmetics are suppressed while the established link is unavailable. Startup and authoritative BID ACCEPTED / BID REJECTED / SOLD cues retain their notes and LED timing.
+
+This remains **V6**, identified automatically at 115200 baud as `V6_RECONNECT_FEEDBACK_FIX`. Tag01 and Tag02 are byte-identical to the previously delivered V6; already-running V6 tags need no reflash. The package includes all three sketches. The gateway is the only board needing this patch. Wiring, keys, availability, bidding, debounce and transport contracts are unchanged. A remaining healthy tag can still produce the existing idle green breathing indication; that is separate from the faulty repeated sound/green pulses.
+
 Switch OFF now sends its authenticated state immediately after the existing 50 ms switch debounce, hides that tag's radar dot and displays OFF / OUT OF BIDDING. The gateway no longer treats an authenticated BLE connection as bidding availability. An abrupt disconnect or heartbeat timeout displays LOST, rather than retaining the old 25-second proof-freshness availability. The existing 1.5-second established-session loss timeout remains.
 
 OFF drops unsent BID/JOIN work, including a press waiting through an OFF/ON cycle. A transport failure discards old-session work on re-authentication. In-flight bids use the engine's recorded result; accepted bids remain binding and can still win after OFF or a tag fault. The V5 button-input path, startup melody, static tag LEDs, radio format, signed bid format, pricing and countdown length are retained.
@@ -55,6 +61,6 @@ arduino-cli core update-index --additional-urls https://espressif.github.io/ardu
 arduino-cli core install esp32:esp32@3.3.12 --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
 ```
 
-The checksum check also validates canonical shared-header copies. It runs twelve C++ programs with sanitizers, firmware Python checks against the real engine canonical message/state machine, and the bridge's PTY/ACK tests. Temporary executables remain outside the source tree. After intentional source changes regenerate SHA256SUMS.json with `python tools/check.py --update-checksums`, then rerun checks. CI runs the same checks, engine tests and all three board builds.
+The checksum check also validates canonical shared-header copies. It runs thirteen C++ programs with sanitizers, firmware Python checks against the real engine canonical message/state machine, and the bridge's PTY/ACK tests. Temporary executables remain outside the source tree. After intentional source changes regenerate SHA256SUMS.json with `python tools/check.py --update-checksums`, then rerun checks. CI runs the same checks, engine tests and all three board builds.
 
 [VALIDATION.md](VALIDATION.md) records the delivered code's target builds and host verification. Real RF, acoustic/LED timing, heap margin and a complete assembled-hardware round remain bench acceptance work. [previews/off-and-lost.png](previews/off-and-lost.png) shows the V6 availability states; [previews/gateway-screens.png](previews/gateway-screens.png) shows the retained input/result screens. Both are rendered from the actual OLED drawing code. [legacy_docs/](legacy_docs/) records the working baseline's provenance; V2, V4 and V5 remain in Git history. Archives, build products and raw local logs are excluded from Git. Font attribution is in [FONT_LICENSE.txt](FONT_LICENSE.txt).

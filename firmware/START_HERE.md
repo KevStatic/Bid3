@@ -2,6 +2,8 @@
 
 This is the corrected Gateway, Tag01 and Tag02 source package, rebuilt from the exact working ZIP you supplied. The original BLE advertisements, service, identity storage, discovery and signed button-proof exchange are the foundation. An authenticated persistent notification channel is enabled only after that original exchange succeeds.
 
+**V6 reconnect feedback patch:** the gateway fixes repeated chirps/green pulses when a lost tag advertises while reconnecting. Sound cooldowns are independent of the OLED's LOST state, and stale discovery sounds are cancelled without cancelling accepted/rejected bid or SOLD feedback. Tag01 and Tag02 are unchanged from V6 TAG_OFF_FIX and included in full. If those V6 sketches are already on both tags, upload only this gateway patch. Otherwise upload all three below. No engine or bridge update is needed for this audio patch.
+
 ## Upload
 
 1. Extract this entire package. Keep each sketch folder and all its headers together.
@@ -32,7 +34,7 @@ The 30 ms switch debounce remains intentional. BLE transmission, scheduling and 
 
 ## What you should see
 
-The gateway announces `Bid3 V6 WORKING_BASE`, then discovers the same `BagTrail-Tag01` and `BagTrail-Tag02` BLE devices as your working ZIP. The original signed checks produce `TAG01 BUTTON SYNC` / `TAG02 BUTTON SYNC`. Successful fast negotiation then prints:
+The gateway announces `Bid3 V6 RECONNECT_FEEDBACK_FIX`, then discovers the same `BagTrail-Tag01` and `BagTrail-Tag02` BLE devices as your working ZIP. Its repeating status includes `"firmware":"V6_RECONNECT_FEEDBACK_FIX"`. The original signed checks produce `TAG01 BUTTON SYNC` / `TAG02 BUTTON SYNC`. Successful fast negotiation then prints:
 
 ```
 BID3_LINK tag=TAG1 state=FAST_READY
