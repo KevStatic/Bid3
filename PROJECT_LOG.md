@@ -30,6 +30,7 @@ A live auction run with physical paddle tags, built for **ETHGlobal Mumbai (Nov 
 | Frontend | Next.js 16 on Vercel | `web/` |
 | Backend | FastAPI engine + Python bridge on the laptop + TypeScript Arkiv worker | `engine/`, `bridge/`, `arkiv-worker/` |
 | Hosting | Vercel (web), Railway (engine + worker, one engine instance, volume at `/data`) | READMEs |
+| Firmware | Arduino C++ for the tags and gateway, on branch **`firmware`** (not on `main`) | `origin/firmware` |
 | Commits | **Only Kev commits.** AI assistants write files but never run `git commit` or `git push` | — |
 
 Event timing: submissions reported as **Sun 8 Nov 2026, 09:00 IST** (confirm on the ETHGlobal dashboard). The plan targets submitting by 07:00.
@@ -45,6 +46,12 @@ arkiv/          Arkiv prize write-ups (schema.md done; friction, reach, why-arki
 PROJECT_LOG.md  This file
 AGENTS.md       Pointer for AI tools: read this log first
 ```
+
+**Branches**
+- `main`: web, engine, bridge, arkiv-worker, arkiv docs, this log.
+- `firmware`: Arduino C++ for the tags and gateway, being reworked. It was branched from `1870e89`, before the backend landed, so it doesn't yet have this log or `bridge/README.md`. Merge `main` into `firmware` so firmware work can see the serial protocol spec and the log.
+
+**Who works where:** each component may be handled by a separate AI chat in the Claude Project "EthGlobal Hackathon" (engine, bridge, arkiv-worker, web, firmware). Every chat reads this log first, works only in its own folder or branch, changes a contract in section 4 only together with the other side, and adds a changelog entry here.
 
 Planning documents (outside the repo): `/Users/kev/Hackathons/EthGlobal/Plans/`. These are `Bid3_Architecture_v2_2026-11-06.md`, `Bid3_Quick_Brief_v2_2026-11-06.md` and `understanding.md`. They predate the BID-button decision; where they disagree with this log, this log wins.
 
@@ -93,7 +100,7 @@ With no env, the web app runs a labelled in-browser simulation and bundled sampl
 
 **Open, roughly in priority order**
 
-1. **Gateway firmware:** emit `AUCTION_EVENT_JSON=` for switch ON/OFF (JOIN/LEAVE) and button (BID); answer `CMD=STATUS`. Optionally drive the OLED, LEDs and buzzer from `AUCTION_STATE_JSON=`. Spec in `bridge/README.md`.
+1. **Gateway firmware** (branch `firmware`): emit `AUCTION_EVENT_JSON=` for switch ON/OFF (JOIN/LEAVE) and button (BID); answer `CMD=STATUS`. Optionally drive the OLED, LEDs and buzzer from `AUCTION_STATE_JSON=`. Spec in `bridge/README.md`.
 2. **Real-hardware round:** run engine + bridge + web against the real gateway; measure press-to-ack latency and confirm the countdown length.
 3. **Arkiv:**
    - Create and fund the publisher wallet; get an access key.
@@ -120,6 +127,15 @@ With no env, the web app runs a labelled in-browser simulation and bundled sampl
 ---
 
 ## Changelog
+
+### 2026-11-06 ~10:05 IST: firmware branch and multi-chat setup
+- **New branch:** `firmware` (on origin), for Arduino C++ tag and gateway firmware. No firmware changes pushed yet; the team is reworking the code.
+  - It points at `1870e89`, so it lacks the backend commit `fac59ab`, including this log and `bridge/README.md`. Merge `main` into it.
+- **Firmware contract:** the serial protocol in `bridge/README.md`.
+  - Emit `AUCTION_EVENT_JSON=` for JOIN, LEAVE and BID; answer `CMD=STATUS`.
+  - Optionally read `AUCTION_STATE_JSON=` and `AUCTION_ACK_JSON=` to drive the display and LEDs.
+  - Default tag refs are `TAG1` and `TAG2` (the engine's `SEED_TAGS`).
+- **Separate chats:** each component will be handled by its own chat in the Claude Project; this log is the shared source of truth between them.
 
 ### 2026-11-06 ~09:50 IST: project log and agent pointer
 - Added `PROJECT_LOG.md` (this file) and `AGENTS.md` at the repo root so every assistant starts from the same context.
