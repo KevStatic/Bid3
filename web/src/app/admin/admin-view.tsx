@@ -9,6 +9,8 @@ import { isSimulation } from "@/lib/config";
 import { formatMinor } from "@/lib/format";
 import { LOT_STATE_ORDER, lotStateLine, useEngineLots, useLotStates, type LotState } from "@/lib/lot-state";
 import { useListings } from "@/lib/use-arkiv";
+import { adminPost, type Reply } from "./admin-post";
+import { PaymentsPanel } from "./payments-panel";
 
 /** Must match NO_BID_LIMITS_MS in lib/admin/server.ts. */
 const NO_BID_TIMERS = [
@@ -24,25 +26,11 @@ const PILL: Record<LotState["kind"], { label: string; tone: "live" | "cobalt" | 
   live: { label: "Live now", tone: "live" },
   upNext: { label: "Up next", tone: "cobalt" },
   sold: { label: "Sold", tone: "paddle" },
+  unpaid: { label: "Not paid", tone: "neutral" },
   unsold: { label: "Unsold", tone: "neutral" },
   cancelled: { label: "Withdrawn", tone: "neutral" },
 };
 
-type Reply = { ok: true; phase?: string } | { ok: false; status: number; error: string };
-
-async function adminPost(path: string, password: string, body: unknown = {}): Promise<Reply> {
-  try {
-    const response = await fetch(path, {
-      method: "POST",
-      headers: { "x-admin-password": password, "content-type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    const data = (await response.json().catch(() => ({}))) as { error?: string; phase?: string };
-    return response.ok ? { ok: true, phase: data.phase } : { ok: false, status: response.status, error: data.error ?? `The server answered ${response.status}.` };
-  } catch {
-    return { ok: false, status: 0, error: "Couldn't reach the website's server." };
-  }
-}
 
 export function AdminView() {
   const [password, setPassword] = useState("");
@@ -143,6 +131,8 @@ function Console({ password, onSignOut }: { password: string; onSignOut: (why?: 
       category: listing.category,
       startPriceMinor: listing.startPriceMinor,
       timeLimitMs: timerMs,
+      // A payment for this lot goes to the seller's wallet (the listing's owner).
+      sellerAddress: listing.sellerAddress || listing.owner,
     });
     setBusy(null);
     if (!reply.ok) return handleFailure(reply);
@@ -244,6 +234,8 @@ function Console({ password, onSignOut }: { password: string; onSignOut: (why?: 
           ) : null}
         </div>
       ) : null}
+
+      <PaymentsPanel password={password} onFailure={handleFailure} />
 
       <h2 className="mt-10 text-base font-bold">Lots</h2>
       {listings.isError ? (

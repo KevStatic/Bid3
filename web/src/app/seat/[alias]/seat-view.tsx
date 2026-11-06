@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { HammerBar } from "@/components/auction/hammer-bar";
+import { PaymentStatus } from "@/components/auction/payment-status";
 import { PriceDisplay } from "@/components/auction/price-display";
 import { TagIllustration } from "@/components/tag-illustration";
 import { buttonClass, LotTag, Skeleton, SourceBadge } from "@/components/ui";
@@ -9,6 +10,7 @@ import { formatMinor } from "@/lib/format";
 import { useAuctionStream, useCountdown } from "@/lib/use-auction-stream";
 import { useListingByAuction } from "@/lib/use-arkiv";
 import { useFeaturedAuctionId } from "@/lib/use-featured-auction";
+import { SeatWallet } from "./seat-wallet";
 
 const LIGHTS = [
   { look: "Slow pulse", meaning: "Joining the room" },
@@ -76,9 +78,12 @@ export function SeatView({ alias }: { alias: string }) {
             <div className="mt-5">
               <HammerBar state={state} msLeft={msLeft} size="md" />
             </div>
+            {state.phase === "SOLD_LOCKED" ? <PaymentStatus auctionId={state.auctionId} className="mt-5" /> : null}
           </div>
         ) : null}
       </div>
+
+      <SeatWallet alias={alias} />
 
       <section className="mt-10">
         <h2 className="text-xl font-bold">How to bid</h2>

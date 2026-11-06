@@ -25,6 +25,7 @@ A live auction run with physical paddle tags, built for **ETHGlobal Mumbai (Nov 
 | Button | **Press = bid at the next step** (not a jump bid on a running clock) | engine `auction.py` |
 | Who opens bidding | **The auctioneer**, on one lot at a time, from the website's `/admin` page (password). Bidding is open at once; no minimum number of paddles; any seated paddle can join at any time and bid. A **lone bidder wins** at their bid. A **no-bid timer** (1/2/5/10 min, chosen by the auctioneer) runs from opening; with no bid the lot closes UNSOLD and goes back to the seller (Kev, Sat 7 Nov ~02:15) | engine `auction.py`, `web/src/app/admin/` |
 | Leader switches OFF | **Bid stays binding**; they can still win | engine `auction.py` |
+| Payment | **The winning paddle's wallet pays the seller on Sepolia.** A bidder links their wallet by tapping the paddle's NFC sticker (`/seat/<alias>`, a signature, no gas). After the hammer the winner confirms the payment on their phone. The rate is **0 ETH per credit** (only gas), editable on `/admin`. If the winner doesn't pay within 10 min (or has no wallet, or the lot has no seller wallet), **the lot stays with the seller**. Paddles without a wallet can still bid. Off unless the engine has `PAYMENTS=1` (Kev, Sat 7 Nov ~04:30) | engine `payments.py`, `web/src/lib/payments*.ts` |
 | Step | **+5% per bid** (500 bps), configurable per auction | rules |
 | Countdown | V6 hardware rounds use 10 s via published countdownMs=10000; unchanged engine seed defaults to 5 s unless SEED_COUNTDOWN_MS=10000 | auction rules / engine env |
 | Stale presses | A press whose `stateVersion` predates the latest bid is refused as `STALE` | engine + firmware |
@@ -65,11 +66,13 @@ Planning documents (outside the repo): `/Users/kev/Hackathons/EthGlobal/Plans/`.
 | Exact pricing `price(n) = min(ceiling, round_half_up(start × (10000+bps)^n / 10000^n))` | `web/src/lib/pricing.ts` | `engine/bid3_engine/pricing.py` |
 | Rules hash (sha256 of canonical JSON, fixed key order) | `web/src/lib/rules-hash.ts` | `engine/bid3_engine/rules_hash.py` |
 | Transcript digest (sha256 of bids sorted by `bidIndex`, sorted keys, non-ASCII escaped like Python's `json.dumps`) | `web/src/lib/transcript-digest.ts` | `engine/bid3_engine/auction.py` (`transcript_digest`) |
-| Arkiv entity schemas (5 types) | `web/src/lib/arkiv/schemas.ts` | `arkiv-worker/src/schemas.ts` (identical copy) |
+| Arkiv entity schemas (6 types, incl. `AuctionSettlement`) | `web/src/lib/arkiv/schemas.ts` | `arkiv-worker/src/schemas.ts` (identical copy) |
 | Serial protocol (115200; AUCTION_EVENT/STATE/ACK_JSON, session-correlated ACKs, AUCTION_STATUS/BRIDGE_JSON, CMD=STATUS) | `bridge/README.md` | gateway firmware |
 | Outbox (`GET /outbox`, `POST /outbox/{id}/published`) | `engine/bid3_engine/api.py` | `arkiv-worker/src/index.ts` |
-| Public lot list `GET /auctions` (auctionId, listingId, phase, priceMinor, bidCount, leaderAlias) | `engine/bid3_engine/api.py` | `web/src/lib/lot-state.ts` (`EngineLot`) |
+| Public lot list `GET /auctions` (auctionId, listingId, phase, priceMinor, bidCount, leaderAlias, payment) | `engine/bid3_engine/api.py` | `web/src/lib/lot-state.ts` (`EngineLot`) |
 | Admin calls (`POST /auctions`, `/open`, `/cancel` with `ADMIN_TOKEN`; house rules 5% / 10 s / ceiling 10× opening) | `engine/bid3_engine/api.py` | `web/src/lib/admin/server.ts` |
+| Payments API (`GET /bindings`, `/payments`, `/payments/settings`, `/auctions/{id}/payment`; admin `POST /bindings`, `/bindings/{alias}/clear`, `/payments/settings`, `/auctions/{id}/payment/paid`; `sellerAddress` on `POST /auctions`) | `engine/bid3_engine/api.py`, `payments.py` | `web/src/lib/payments-shared.ts` (`Payment`, `Binding`), `payments.ts`, `payments-server.ts`, `lib/admin/server.ts` |
+| Settlement outbox record (`AuctionSettlement`, logical id `settlement:<auctionId>:<epoch>`) | `engine/bid3_engine/payments.py` (`settlement_record`) | `arkiv-worker/src/writer.ts` |
 | Paddle roster (tagRef, alias, publicKey per seat) | `firmware/integration/auction-template.json` | `web/src/lib/admin/paddles.ts`. Check: `jq -c '[.seats[] \| {tagRef, alias, publicKey}]' firmware/integration/auction-template.json` and compare |
 
 V6 firmware retains the V4 AUCTION serial contract and remains compatible with the existing bridge. Each JOIN/LEAVE/BID is signed using the existing engine Bid3.Intent.v1 format; enable INTENT_SIGNATURES_REQUIRED and enroll the seat public keys. The engine remains the sole auction authority. V6 templates use a 10-second countdown; existing frozen auctions and the engine's 5-second seed default are not changed silently. V1 signatures do not include auctionId/epoch: one active lot and drained pending requests are required before switching lots. Cross-round replay protection remains a coordinated engine-contract follow-up.
@@ -91,6 +94,8 @@ Checks that catch drift:
 | `ops` | `scripts/tunnel.sh` (once). Then run lots from **`https://bid3.vercel.app/admin`** ("Open bidding" per lot). Fallbacks: `scripts/new-lot.sh` / `scripts/auto-rounds.sh` (create their own keyboard listing, no admin) | the tunnel script prints ✅ for the engine and the site |
 
 **Admin page:** needs two **server** env vars in Vercel, both type Secret and without the `NEXT_PUBLIC_` prefix: `ADMIN_TOKEN` (the same value as in `engine/.env`) and `ADMIN_PASSWORD` (Kev's choice). The browser sends the password to `/api/admin/*`; the server calls the engine through the tunnel with the token. The demo catalogue is `npm run seed-catalogue` in `arkiv-worker` (six items, lots 11–16, `bid3-cat-NN`; safe to rerun).
+
+**Payments on Sepolia:** add `PAYMENTS=1` to `engine/.env`, then restart the **engine and the worker together** (an older worker can't write `AuctionSettlement` and would hold up the outbox). No new Vercel env vars: the payment routes use `ADMIN_TOKEN`; `SEPOLIA_RPC_URL` is optional. Write `https://metamask.app.link/dapp/bid3.vercel.app/seat/K7` (and `…/M4`) onto each paddle's NFC sticker so the tap opens the seat page inside MetaMask. Each bidder's wallet needs a little Sepolia ETH for gas. Lots pay the listing's seller wallet (the demo catalogue's is the publisher wallet); only lots started from `/admin` after this change carry it, so lots from `new-lot.sh`/`auto-rounds.sh` end UNPAID.
 
 **Tunnel:** `scripts/tunnel.sh` runs `cloudflared` in the background, outside any terminal (log: `~/Library/Logs/bid3-tunnel.log`).
 - Closing terminals or restarting the engine, worker or bridge doesn't change its URL. Only a reboot or `scripts/tunnel.sh stop` does.
@@ -157,6 +162,35 @@ With no env, the web app runs a labelled in-browser simulation and bundled sampl
 ---
 
 ## Changelog
+
+### 2026-11-07 ~04:55 IST: paddle wallets and Sepolia payments
+- **Ask (Kev):** tap a phone on a paddle's NFC tag to link a wallet to that paddle; when the paddle wins, that wallet pays the seller's wallet. Sepolia, 0 ETH (only gas) for now, editable later. Paddles without a wallet still bid. If the winner can't pay, the lot always stays with the seller.
+- **Answer given first:** the paddles have no wallets today. Each has a secp256k1 signing key (Ethereum-style addresses K7 `0x9e10…f0D9`, M4 `0x560A…fe70`), used only to sign presses; nothing was paid before this change.
+- **Design:** the winner pays from their phone (a plain Sepolia transaction from the linked wallet to the seller, value = hammer × rate, data = `bid3:<auctionId>`). With native ETH a wallet can't be charged without its owner signing, and this needs no contract. Everything is additive and off unless `PAYMENTS=1`.
+- **Engine:** new `payments.py`, new tables `bindings`, `payees`, `payments`, `settings`. The runtime creates the payment when a lot turns SOLD_LOCKED and expires DUE payments once a second. New endpoints (section 4); `sellerAddress` is optional on `POST /auctions`; `GET /auctions` items gain `payment`. `auction.py` is unchanged. Settings: `PAYMENTS`, `PAYMENT_WEI_PER_CREDIT`, `PAYMENT_WINDOW_MS` (`engine/.env.example`).
+- **Arkiv:** new `AuctionSettlement` entity (`bid3.settlement`) in both `schemas.ts`, written by the worker (`writer.ts`), documented in `arkiv/schema.md`.
+- **Web:**
+  - `/api/bind` checks the wallet's signature of `bindMessage()` (10-min freshness).
+  - `/api/pay` checks the Sepolia transaction (mined, successful, from the payer, to the payee, value ≥ due, memo), then calls the engine.
+  - `/api/admin/payments` sets the rate (ETH per credit); `/api/admin/unbind` unlinks a paddle.
+  - Seat page: "Paying for Paddle X" panel: link the wallet, then **Pay now** when it won, or "Open in MetaMask" without a wallet in the browser.
+  - Room page: payment status with Etherscan links.
+  - Lots: a new state `unpaid` ("Not paid", stays with the seller).
+  - Admin: "Payments on Sepolia" panel (rate, paddle wallets, unlink). Lots started from `/admin` now pass the listing's seller wallet.
+- **Tested:**
+  - Engine: 60 passed (11 new in `tests/test_payments.py`, incl. "payments off changes nothing"). Web: `tsc` and `eslint` clean. Worker: `tsc` and `check-schemas` clean.
+  - On a scratch engine (port 8099) plus a copy of the site on port 3001:
+    - Real signatures linked a wallet. A forged signature, the wrong paddle, a stale signature, an unknown paddle and rebinding a paddle that owes were all refused.
+    - A one-paddle round sold, and the payment became DUE with the right payer, payee and 0 wei.
+    - `/api/pay` against real Sepolia: an unmined hash answered "pending". A real transfer between exactly those wallets passed the sender, recipient and amount checks and was refused only for lacking the memo.
+    - The admin rate set and reset; unlinking while owing was refused.
+    - The AuctionSettlement payloads (PAID and UNPAID) pass the Arkiv SDK's schema validation (checked offline; nothing was written).
+    - Screenshots of the seat and room pages show the panels.
+- **Not tested:** a real MetaMask payment from a phone (needs Sepolia ETH and the NFC stickers), the full PAID path through `/api/pay` (the final engine call is covered by the engine tests), and a real AuctionSettlement write to Arkiv.
+- **Open:**
+  - The seat page's "Open the big screen" link renders `bid3-003` on the server and the live lot in the browser: a hydration warning that predates this change.
+  - A withdrawn or unpaid lot can't be put up again without relisting.
+  - Paid-too-late refunds are manual (only possible when the rate is above 0).
 
 ### 2026-11-07: integrate current main for the landing-page PR
 - The user's PR request authorizes the routine integration commit and branch push. Merged current main into frontend without rewriting history and resolved the sole shared-log conflict by preserving both sets of entries.

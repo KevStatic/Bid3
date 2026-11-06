@@ -5,7 +5,7 @@ import { str, u64 } from "@arkiv-network/sdk/schema";
 import { http, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { config } from "./config.ts";
-import { AuctionBid, AuctionDefinition, AuctionResult, AuctionSnapshot } from "./schemas.ts";
+import { AuctionBid, AuctionDefinition, AuctionResult, AuctionSettlement, AuctionSnapshot } from "./schemas.ts";
 
 /**
  * Turns engine outbox records into Arkiv entities.
@@ -15,12 +15,13 @@ import { AuctionBid, AuctionDefinition, AuctionResult, AuctionSnapshot } from ".
  *   AuctionBid         readonly, 7 days           one per accepted press
  *   AuctionSnapshot    10 minutes                 room fallback; stale ones vanish
  *   AuctionResult      readonly, 90 days, anyone may extend   the record people check
+ *   AuctionSettlement  readonly, 90 days, anyone may extend   the Sepolia payment for a sold lot
  */
 
 export interface OutboxItem {
   id: number;
   auctionId: string;
-  kind: "AuctionDefinition" | "AuctionBid" | "AuctionSnapshot" | "AuctionResult";
+  kind: "AuctionDefinition" | "AuctionBid" | "AuctionSnapshot" | "AuctionResult" | "AuctionSettlement";
   logicalId: string;
   attempts: number;
   payload: Record<string, unknown>;
@@ -74,6 +75,16 @@ export function createWriter() {
         const page = await reader
           .select({ $key: true })
           .from(AuctionResult)
+          .where(eq("auctionId", str(text(p.auctionId))), eq("epoch", num(p.epoch)))
+          .ownedBy(owner)
+          .limit(1)
+          .fetch();
+        return page.entities[0]?.$key ?? null;
+      }
+      case "AuctionSettlement": {
+        const page = await reader
+          .select({ $key: true })
+          .from(AuctionSettlement)
           .where(eq("auctionId", str(text(p.auctionId))), eq("epoch", num(p.epoch)))
           .ownedBy(owner)
           .limit(1)
@@ -149,6 +160,24 @@ export function createWriter() {
             bidCount: num(p.bidCount),
             rulesHash: text(p.rulesHash),
             transcriptDigest: text(p.transcriptDigest),
+          },
+          { expiration: ExpirationTime.fromDays(90), flags: { readonly: true, permissionlessExtension: true } },
+        );
+      case "AuctionSettlement":
+        return wallet.createEntity(
+          AuctionSettlement,
+          {
+            auctionId: text(p.auctionId),
+            epoch: num(p.epoch),
+            status: text(p.status),
+            settledAtMs: num(p.settledAtMs),
+            winnerAlias: text(p.winnerAlias),
+            payer: text(p.payer),
+            payee: text(p.payee),
+            amountWei: text(p.amountWei),
+            chainId: num(p.chainId),
+            txHash: text(p.txHash),
+            reason: text(p.reason),
           },
           { expiration: ExpirationTime.fromDays(90), flags: { readonly: true, permissionlessExtension: true } },
         );

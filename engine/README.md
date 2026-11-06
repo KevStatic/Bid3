@@ -58,6 +58,8 @@ node --experimental-strip-types engine/scripts/make_vectors.mjs   # from the rep
 | Gateway bridge | `WS /bridge?token=…` | `BRIDGE_TOKEN` |
 | Create / open / pause / resync / cancel | `POST /auctions`, `POST /auctions/{id}/open`… | `Bearer ADMIN_TOKEN` |
 | Audit journal (every input, accepted and refused) | `GET /auctions/{id}/journal` | `Bearer ADMIN_TOKEN` |
+| Paddle wallets and payments (public reads) | `GET /bindings`, `GET /payments`, `GET /payments/settings`, `GET /auctions/{id}/payment` | none |
+| Link a wallet, set the rate, record a checked payment | `POST /bindings`, `POST /bindings/{alias}/clear`, `POST /payments/settings`, `POST /auctions/{id}/payment/paid` | `Bearer ADMIN_TOKEN` (called by the website's server) |
 | Outbox for the Arkiv worker | `GET /outbox`, `POST /outbox/{id}/published`, `POST /outbox/{id}/failed` | `Bearer WORKER_TOKEN` |
 
 Create a new lot:
@@ -72,6 +74,17 @@ curl -X POST localhost:8010/auctions/bid3-010/open -H "Authorization: Bearer $AD
 ```
 
 The most recently opened auction is the one the gateway's presses go to. Opening it immediately sends the connected bridge the new lot's state (with its `auctionId`). Paddles then need to JOIN the new lot: the `firmware`-branch bridge sends `CMD=STATUS` for that automatically. With the bridge on `main`, switch each paddle off and on (or type `join TAG1` in `--keyboard` mode).
+
+## Payments on Sepolia (`PAYMENTS=1`)
+
+`bid3_engine/payments.py`, kept apart from `auction.py`: it never changes who can bid or who wins.
+
+- A bidder taps a paddle's NFC sticker, which opens `/seat/<alias>`, and links their wallet by signing a message. The website checks the signature and calls `POST /bindings`.
+- When a lot sells, a payment is **DUE**: the winner's linked wallet pays the seller's wallet `PAYMENT_WEI_PER_CREDIT` wei per 1.00 credit of the hammer price. The default is 0, so it's a 0 ETH transaction and only gas is spent. The admin page can change the rate at any time; each payment keeps the rate it was due at.
+- The winner pays from their phone. The website checks the Sepolia transaction (mined, from the payer, to the seller, enough value, memo `bid3:<auctionId>`), then calls `POST /auctions/{id}/payment/paid`. The engine re-checks it and marks it **PAID**.
+- With no payment within `PAYMENT_WINDOW_MS` (10 min), or with no seller wallet on the lot, it's **UNPAID** and the lot stays with the seller.
+- A paddle's wallet can't change once it has bid on the live lot, or while it owes a payment. A paddle with no wallet can bid as before, and can still link one after winning.
+- PAID and UNPAID queue an `AuctionSettlement` record for Arkiv. Restart the worker with the engine when you switch this on.
 
 ## What goes to Arkiv
 

@@ -20,7 +20,7 @@ const STATUSES: { value: StatusChip; label: string }[] = [
   { value: "closed", label: "Sold or unsold" },
 ];
 const matches = (chip: StatusChip, state: LotState | undefined) =>
-  !chip || !state ? !chip : chip === "closed" ? state.kind === "sold" || state.kind === "unsold" || state.kind === "cancelled" : state.kind === chip;
+  !chip || !state ? !chip : chip === "closed" ? state.kind !== "live" && state.kind !== "upNext" : state.kind === chip;
 
 const SORTS: { value: ListingSort; label: string }[] = [
   { value: "closing", label: "Closing soonest" },

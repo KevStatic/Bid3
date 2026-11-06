@@ -38,7 +38,7 @@ The live room needs the event laptop's engine and Cloudflare tunnel to be online
 - Result entity: [`0x6d84…1222`](https://rabdi.explorer.arkiv.network/entity/0x6d84cd90e2d8fc7a8946676f247ebf17660c9e77d54843107b0d77608c421222)
 - Publisher: `0xCf11CEa33b48A48901DD2a03730524a69E64e32d`
 - Full round cost: `0.00444 tGLM` on the Rabdi testnet
-- Prices are **demo credits**. Bid3 does not move ETH, tokens or real money.
+- Prices are **demo credits**. With payments on (`PAYMENTS=1`), the winning paddle's wallet, linked by tapping the paddle's NFC sticker, pays the seller on the **Sepolia** testnet: 0 ETH at the default rate, so only gas. No real money moves. The outcome is an `AuctionSettlement` entity on Arkiv with the Sepolia transaction.
 
 ## How a round works
 
@@ -229,7 +229,7 @@ Claude and Codex were used as coding and documentation assistants across the web
 
 ## Current limitations
 
-- Payments are simulated; Bid3 provides auction evidence, not escrow or settlement.
+- Payments are Sepolia testnet transactions (0 ETH by default) with no escrow: the winner confirms the payment on their phone after the hammer, and a lot that isn't paid within 10 minutes stays with the seller.
 - The live round has one central engine and supports one active lot at a time.
 - V1 signed intents do not bind the auction ID or epoch; operational draining is required between lots.
 - Publisher-owned Arkiv entities are immutable in content but still deletable by that owner.

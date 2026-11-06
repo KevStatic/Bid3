@@ -39,6 +39,14 @@ class Settings:
     seed_demo: bool = field(default_factory=lambda: _bool("SEED_DEMO", True))
     seed_tags: str = field(default_factory=lambda: os.environ.get("SEED_TAGS", "TAG1:K7,TAG2:M4"))
     seed_countdown_ms: int = field(default_factory=lambda: int(os.environ.get("SEED_COUNTDOWN_MS", "5000")))
+    # Sepolia payments (payments.py): when a lot sells, the winning paddle's linked wallet pays the seller.
+    # Off by default: nothing about a round changes until PAYMENTS=1.
+    payments_enabled: bool = field(default_factory=lambda: _bool("PAYMENTS", False))
+    # Wei per 1.00 credit of the hammer price. 0 = a 0 ETH payment, only gas. The admin page can change
+    # it at any time (stored in the database, which then wins over this default).
+    payment_wei_per_credit: int = field(default_factory=lambda: int(os.environ.get("PAYMENT_WEI_PER_CREDIT", "0")))
+    # How long the winner has to pay before the lot stays with the seller.
+    payment_window_ms: int = field(default_factory=lambda: int(os.environ.get("PAYMENT_WINDOW_MS", str(10 * 60_000))))
 
 
 def load_settings() -> Settings:

@@ -14,6 +14,7 @@ from typing import Any, Protocol
 
 from .auction import Auction, Outcome, Rules
 from .intents import Intent, IntentError, parse_intent, verify_signature
+from .payments import Payments
 from .store import Store
 
 log = logging.getLogger("bid3.engine")
@@ -36,6 +37,7 @@ class Runtime:
         auto_resume: bool = True,
         require_signatures: bool = False,
         tick_interval_s: float = 0.05,
+        payments: Payments | None = None,
     ):
         self.store = store
         self.clock = clock
@@ -43,6 +45,8 @@ class Runtime:
         self.auto_resume = auto_resume
         self.require_signatures = require_signatures
         self.tick_interval_s = tick_interval_s
+        self.payments = payments
+        self._last_payment_check = 0
 
         self.auctions: dict[str, Auction] = {}
         self.public_keys: dict[tuple[str, str], str] = {}  # (auctionId, tagRef) -> pubkey hex
@@ -66,6 +70,10 @@ class Runtime:
             if not auction.is_closed() and auction.phase != "DRAFT":
                 self.active_auction_id = auction.auction_id
             self._persist(auction, Outcome(changed=True, journal=[("RESTORED", {"phase": auction.phase})]), now)
+        if self.payments:
+            # A settled payment whose Arkiv record never got queued (a crash in between) is queued now.
+            for kind, logical_id, payload in self.payments.final_records():
+                self.store.queue_outbox(payload["auctionId"], kind, logical_id, payload, now)
         self._tick_task = asyncio.create_task(self._tick_loop())
 
     async def stop(self) -> None:
@@ -127,7 +135,16 @@ class Runtime:
             if auction is None:
                 raise KeyError(auction_id)
             now = self.clock()
+            was_sold = auction.phase == "SOLD_LOCKED"
             out = fn(auction, now)
+            if self.payments and self.payments.enabled and not was_sold and auction.phase == "SOLD_LOCKED" and auction.result:
+                # The hammer fell: the winner now owes the seller (payments.py). Bidding itself is unchanged.
+                record = self.payments.on_sold(
+                    auction.auction_id, auction.epoch, auction.result["winnerAlias"], auction.result["hammerPriceMinor"], now
+                )
+                out.journal.append(("PAYMENT_DUE", {"winnerAlias": auction.result["winnerAlias"]}))
+                if record:
+                    out.outbox.append(record)
             if allow_auto_resume and self.auto_resume and auction.phase == "PAUSED" and auction.can_resume()[0]:
                 resumed = auction.resync(now)
                 out.changed = out.changed or resumed.changed
@@ -174,6 +191,7 @@ class Runtime:
     async def _tick_loop(self) -> None:
         while True:
             await asyncio.sleep(self.tick_interval_s)
+            self._expire_payments()
             for auction_id, auction in list(self.auctions.items()):
                 if auction.is_closed() or auction.phase == "DRAFT":
                     continue
@@ -182,6 +200,28 @@ class Runtime:
                     await self._maybe_snapshot(auction)
                 except Exception:  # noqa: BLE001 — never let one auction stop the clock
                     log.exception("tick failed for %s", auction_id)
+
+    def _expire_payments(self) -> None:
+        if not self.payments:
+            return
+        now = self.clock()
+        if now - self._last_payment_check < 1_000:
+            return
+        self._last_payment_check = now
+        try:
+            for kind, logical_id, payload in self.payments.expire_due(now):
+                self.store.queue_outbox(payload["auctionId"], kind, logical_id, payload, now)
+                log.info("payment for %s not made in time: the lot stays with the seller", payload["auctionId"])
+        except Exception:  # noqa: BLE001 — never let payments stop the clock
+            log.exception("payment expiry check failed")
+
+    def locked_aliases(self) -> set[str]:
+        """Paddles whose wallet can't change now: they bid on the live lot, or owe a payment."""
+        locked = self.payments.owing_aliases() if self.payments else set()
+        auction = self.auctions.get(self.active_auction_id) if self.active_auction_id else None
+        if auction and not auction.is_closed():
+            locked |= {b["bidderAlias"] for b in auction.bids}
+        return locked
 
     async def _maybe_snapshot(self, auction: Auction) -> None:
         now = self.clock()

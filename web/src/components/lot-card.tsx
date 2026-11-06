@@ -14,6 +14,7 @@ const STATE = {
   live: { label: "Live now", tone: "live" as const },
   upNext: { label: "Up next", tone: "cobalt" as const },
   sold: { label: "Sold", tone: "paddle" as const },
+  unpaid: { label: "Not paid", tone: "neutral" as const },
   unsold: { label: "Unsold", tone: "neutral" as const },
   cancelled: { label: "Withdrawn", tone: "neutral" as const },
 };
@@ -32,7 +33,7 @@ export function LotCard({ listing, nowMs, state }: { listing: Listing; nowMs: nu
       : listing.status === "CLOSED"
         ? `Closed ${fromNow(listing.closesAtMs, nowMs)}`
         : `Closes ${fromNow(listing.closesAtMs, nowMs)}`;
-  const closed = state ? state.kind === "sold" || state.kind === "unsold" || state.kind === "cancelled" : listing.status === "CLOSED";
+  const closed = state ? state.kind !== "live" && state.kind !== "upNext" : listing.status === "CLOSED";
 
   return (
     <article className="flex h-full flex-col rounded-panel border border-line bg-surface p-5 transition-colors hover:border-line-strong">

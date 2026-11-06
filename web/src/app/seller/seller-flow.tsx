@@ -19,6 +19,7 @@ const PILL: Record<LotState["kind"], { label: string; tone: "live" | "cobalt" | 
   live: { label: "Live now", tone: "live" },
   upNext: { label: "Up next", tone: "cobalt" },
   sold: { label: "Sold", tone: "paddle" },
+  unpaid: { label: "Back with you", tone: "neutral" },
   unsold: { label: "Back with you", tone: "neutral" },
   cancelled: { label: "Withdrawn", tone: "neutral" },
 };
@@ -217,7 +218,9 @@ export function SellerFlow() {
                       {state
                         ? state.kind === "unsold"
                           ? "No bids in time, so it's back with you. List it again any time."
-                          : lotStateLine(state)
+                          : state.kind === "unpaid"
+                            ? `Paddle ${state.winnerAlias} won but didn't pay (${state.reason.toLowerCase()}), so it stays with you.`
+                            : lotStateLine(state)
                         : `Opens at ${formatMinor(l.startPriceMinor)}`}
                     </p>
                     {state?.kind === "live" ? (

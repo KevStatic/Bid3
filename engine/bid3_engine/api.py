@@ -15,6 +15,15 @@ Operator (Authorization: Bearer ADMIN_TOKEN)
   POST /auctions/{id}/pause|resync|cancel
   GET  /auctions/{id}/journal         every input, accepted and refused
 
+Paddle wallets and Sepolia payments (payments.py)
+  GET  /bindings                      which wallet each paddle pays from
+  GET  /payments, /payments/settings  recent payments; the rate and window
+  GET  /auctions/{id}/payment         the payment for a sold lot (404 if none)
+  POST /bindings                      {alias, wallet}  (operator token: the website checked the signature)
+  POST /bindings/{alias}/clear        (operator token)
+  POST /payments/settings             {weiPerCredit}  (operator token)
+  POST /auctions/{id}/payment/paid    {txHash, payer, payee, amountWei}  (operator token: the website checked Sepolia)
+
 Arkiv worker (Authorization: Bearer WORKER_TOKEN)
   GET  /outbox                        records waiting to be written to Arkiv
   POST /outbox/{id}/published         {entityKey, txHash}
@@ -34,6 +43,7 @@ from pydantic import BaseModel, Field
 
 from .auction import Rules
 from .config import Settings, load_settings
+from .payments import ADDRESS, PaymentError, Payments
 from .runtime import Runtime
 from .store import Store
 
@@ -61,6 +71,24 @@ class AuctionIn(BaseModel):
     category: str = Field(default="Other", max_length=40)
     rules: RulesIn
     seats: list[SeatIn] = Field(min_length=2, max_length=16)
+    # The seller's wallet, which a payment for this lot goes to. Optional: without it the lot can't be paid for.
+    sellerAddress: str | None = Field(default=None, pattern=ADDRESS.pattern)
+
+
+class BindingIn(BaseModel):
+    alias: str = Field(min_length=1, max_length=8)
+    wallet: str = Field(pattern=ADDRESS.pattern)
+
+
+class PaymentSettingsIn(BaseModel):
+    weiPerCredit: str = Field(pattern=r"^[0-9]{1,30}$")
+
+
+class PaidIn(BaseModel):
+    txHash: str = Field(pattern=r"^0x[0-9a-fA-F]{64}$")
+    payer: str = Field(pattern=ADDRESS.pattern)
+    payee: str = Field(pattern=ADDRESS.pattern)
+    amountWei: str = Field(pattern=r"^[0-9]{1,40}$")
 
 
 class ReasonIn(BaseModel):
@@ -85,12 +113,17 @@ def _token_ok(expected: str, given: str | None) -> bool:
 def create_app(settings: Settings | None = None, runtime: Runtime | None = None) -> FastAPI:
     settings = settings or load_settings()
     store = runtime.store if runtime else Store(settings.database_path)
+    payments = (runtime.payments if runtime else None) or Payments(
+        store, settings.payments_enabled, settings.payment_wei_per_credit, settings.payment_window_ms
+    )
     runtime = runtime or Runtime(
         store,
         snapshot_interval_ms=settings.snapshot_interval_ms,
         auto_resume=settings.auto_resume,
         require_signatures=settings.require_signatures,
+        payments=payments,
     )
+    runtime.payments = payments
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -145,7 +178,7 @@ def create_app(settings: Settings | None = None, runtime: Runtime | None = None)
     async def list_auctions() -> list[dict[str, Any]]:
         now = runtime.clock()
         return [
-            {"auctionId": a.auction_id, "listingId": a.listing_id, "phase": a.phase, "priceMinor": a.price_minor, "bidCount": a.bid_count, "leaderAlias": a.leader_alias, "stateVersion": a.state_version, "serverTimeMs": now}
+            {"auctionId": a.auction_id, "listingId": a.listing_id, "phase": a.phase, "priceMinor": a.price_minor, "bidCount": a.bid_count, "leaderAlias": a.leader_alias, "stateVersion": a.state_version, "serverTimeMs": now, "payment": payments.view(a.auction_id)}
             for a in runtime.auctions.values()
         ]
 
@@ -214,6 +247,8 @@ def create_app(settings: Settings | None = None, runtime: Runtime | None = None)
             auction = await runtime.create(body.auctionId, body.listingId, rules, [s.model_dump() for s in body.seats], category=body.category)
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
+        if body.sellerAddress:
+            payments.set_payee(body.auctionId, body.sellerAddress)
         return {"state": auction.state(runtime.clock())}
 
     @app.post("/auctions/{auction_id}/open", dependencies=[Depends(admin)])
@@ -250,6 +285,62 @@ def create_app(settings: Settings | None = None, runtime: Runtime | None = None)
     async def journal(auction_id: str, limit: int = 200) -> list[dict[str, Any]]:
         auction_or_404(auction_id)
         return runtime.store.journal(auction_id, min(limit, 1000))
+
+    # ------------------------------------------------------------ paddle wallets and payments
+
+    @app.get("/bindings")
+    async def bindings() -> dict[str, Any]:
+        locked = runtime.locked_aliases()
+        return {alias: {**b, "locked": alias in locked} for alias, b in payments.bindings().items()}
+
+    @app.get("/payments")
+    async def recent_payments(limit: int = 50) -> list[dict[str, Any]]:
+        return payments.recent(min(limit, 200))
+
+    @app.get("/payments/settings")
+    async def payment_settings() -> dict[str, Any]:
+        return payments.settings_view()
+
+    @app.get("/auctions/{auction_id}/payment")
+    async def auction_payment(auction_id: str) -> dict[str, Any]:
+        view = payments.view(auction_id)
+        if view is None:
+            raise HTTPException(404, "no payment for this lot")
+        return view
+
+    @app.post("/bindings", dependencies=[Depends(admin)])
+    async def bind(body: BindingIn) -> dict[str, Any]:
+        async with runtime._lock:  # the live lot's bids can't change while the lock is checked
+            try:
+                payments.bind(body.alias, body.wallet, runtime.clock(), runtime.locked_aliases())
+            except PaymentError as exc:
+                raise HTTPException(409, str(exc)) from exc
+        return {"ok": True, "bindings": payments.bindings()}
+
+    @app.post("/bindings/{alias}/clear", dependencies=[Depends(admin)])
+    async def clear_binding(alias: str) -> dict[str, Any]:
+        async with runtime._lock:
+            try:
+                payments.clear(alias, runtime.locked_aliases())
+            except PaymentError as exc:
+                raise HTTPException(409, str(exc)) from exc
+        return {"ok": True, "bindings": payments.bindings()}
+
+    @app.post("/payments/settings", dependencies=[Depends(admin)])
+    async def set_payment_settings(body: PaymentSettingsIn) -> dict[str, Any]:
+        payments.set_wei_per_credit(int(body.weiPerCredit))
+        return payments.settings_view()
+
+    @app.post("/auctions/{auction_id}/payment/paid", dependencies=[Depends(admin)])
+    async def payment_paid(auction_id: str, body: PaidIn) -> dict[str, Any]:
+        now = runtime.clock()
+        async with runtime._lock:
+            try:
+                kind, logical_id, payload = payments.mark_paid(auction_id, body.txHash, body.payer, body.payee, int(body.amountWei), now)
+            except PaymentError as exc:
+                raise HTTPException(409, str(exc)) from exc
+            runtime.store.queue_outbox(auction_id, kind, logical_id, payload, now)
+        return payments.view(auction_id) or {}
 
     # ------------------------------------------------------------ worker
 

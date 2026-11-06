@@ -6,6 +6,7 @@ import { BidLedger } from "@/components/auction/bid-ledger";
 import { HammerBar } from "@/components/auction/hammer-bar";
 import { HealthStrip } from "@/components/auction/health-strip";
 import { PaddleRoster } from "@/components/auction/paddle-roster";
+import { PaymentStatus } from "@/components/auction/payment-status";
 import { phaseHeadline, priceLabel } from "@/components/auction/phase-copy";
 import { PriceDisplay } from "@/components/auction/price-display";
 import { Button, Container, LotTag, Panel, Skeleton, SourceBadge } from "@/components/ui";
@@ -139,6 +140,7 @@ export function RoomView({ auctionId: requestedId }: { auctionId: string }) {
               </p>
             ) : null}
             {paused && state.pauseReason ? <p className="mt-1 text-ink-2">{state.pauseReason}</p> : null}
+            {sold ? <PaymentStatus auctionId={shownId} className="mt-4" /> : null}
 
             <div className="mt-8">
               <HammerBar state={state} msLeft={msLeft} />

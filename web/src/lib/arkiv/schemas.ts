@@ -1,7 +1,7 @@
 import { addr, defineSchema, str, u64 } from "@arkiv-network/sdk/schema";
 
 /**
- * Bid3's five Arkiv entity types.
+ * Bid3's six Arkiv entity types.
  *
  * This file is the single source of truth for /arkiv/schema.md and is meant
  * to be imported by the Arkiv worker too, so reads and writes can never drift.
@@ -14,6 +14,7 @@ import { addr, defineSchema, str, u64 } from "@arkiv-network/sdk/schema";
  *   AuctionBid         Bid3 publisher wallet     closesAt + 7 days
  *   AuctionSnapshot    Bid3 publisher wallet     ~10 minutes
  *   AuctionResult      Bid3 publisher wallet     long, renewed
+ *   AuctionSettlement  Bid3 publisher wallet     long, like the result
  */
 
 /** Catalogue page: filter by category, status, start price; sort by closing time. */
@@ -83,4 +84,23 @@ export const AuctionResult = defineSchema("bid3.result", {
   bidCount: u64(),
   rulesHash: str(),
   transcriptDigest: str(),
+});
+
+/**
+ * The payment for a sold lot, made on Sepolia from the winning paddle's linked wallet to the seller.
+ * PAID carries the Sepolia transaction; UNPAID means the lot stayed with the seller, with the reason.
+ * Addresses are plain strings because an UNPAID lot may have no payer.
+ */
+export const AuctionSettlement = defineSchema("bid3.settlement", {
+  auctionId: str().indexed(),
+  epoch: u64().indexed(),
+  status: str().indexed(), // PAID | UNPAID
+  settledAtMs: u64().indexed(),
+  winnerAlias: str(),
+  payer: str(),
+  payee: str(),
+  amountWei: str(),
+  chainId: u64(),
+  txHash: str(),
+  reason: str(),
 });

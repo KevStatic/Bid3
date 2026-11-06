@@ -43,6 +43,35 @@ CREATE TABLE IF NOT EXISTS outbox (
   superseded   INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS outbox_pending ON outbox(published_at, superseded, id);
+-- Paddle wallets and Sepolia payments (payments.py). Separate from the auction state on purpose.
+CREATE TABLE IF NOT EXISTS bindings (
+  alias        TEXT PRIMARY KEY,
+  wallet       TEXT NOT NULL UNIQUE,
+  bound_at_ms  INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS payees (
+  auction_id   TEXT PRIMARY KEY,
+  seller       TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS payments (
+  auction_id   TEXT PRIMARY KEY,
+  epoch        INTEGER NOT NULL,
+  winner_alias TEXT NOT NULL,
+  hammer_price_minor INTEGER NOT NULL,
+  payer        TEXT,
+  payee        TEXT,
+  amount_wei   TEXT NOT NULL,
+  status       TEXT NOT NULL,
+  reason       TEXT,
+  tx_hash      TEXT UNIQUE,
+  due_by_ms    INTEGER NOT NULL,
+  created_at   INTEGER NOT NULL,
+  settled_at   INTEGER
+);
+CREATE TABLE IF NOT EXISTS settings (
+  key          TEXT PRIMARY KEY,
+  value        TEXT NOT NULL
+);
 """
 
 
@@ -175,4 +204,95 @@ class Store:
                 "SELECT kind, logical_id, entity_key, tx_hash, published_at FROM outbox WHERE auction_id=? AND published_at IS NOT NULL ORDER BY id",
                 (auction_id,),
             ).fetchall()
+        return [dict(r) for r in rows]
+
+
+    # ------------------------------------------------------------ payments (see payments.py)
+
+    def queue_outbox(self, auction_id: str, kind: str, logical_id: str, payload: dict[str, Any], now_ms: int) -> None:
+        """Adds one Arkiv record outside an auction transition. A record with the same logical id is ignored."""
+        with self._lock:
+            self._db.execute(
+                "INSERT OR IGNORE INTO outbox(auction_id, kind, logical_id, payload_json, created_at) VALUES(?,?,?,?,?)",
+                (auction_id, kind, logical_id, json.dumps(payload), now_ms),
+            )
+
+    def get_setting(self, key: str) -> str | None:
+        with self._lock:
+            row = self._db.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+        return None if row is None else str(row["value"])
+
+    def set_setting(self, key: str, value: str) -> None:
+        with self._lock:
+            self._db.execute("INSERT INTO settings(key, value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, value))
+
+    def bindings(self) -> list[dict[str, Any]]:
+        with self._lock:
+            rows = self._db.execute("SELECT alias, wallet, bound_at_ms FROM bindings ORDER BY alias").fetchall()
+        return [dict(r) for r in rows]
+
+    def set_binding(self, alias: str, wallet: str, now_ms: int) -> None:
+        """Links the wallet to this paddle only: any other paddle it was linked to loses it."""
+        with self._lock:
+            cur = self._db.cursor()
+            cur.execute("BEGIN IMMEDIATE")
+            try:
+                cur.execute("DELETE FROM bindings WHERE wallet=? AND alias<>?", (wallet, alias))
+                cur.execute(
+                    "INSERT INTO bindings(alias, wallet, bound_at_ms) VALUES(?,?,?) "
+                    "ON CONFLICT(alias) DO UPDATE SET wallet=excluded.wallet, bound_at_ms=excluded.bound_at_ms",
+                    (alias, wallet, now_ms),
+                )
+                cur.execute("COMMIT")
+            except Exception:
+                cur.execute("ROLLBACK")
+                raise
+
+    def clear_binding(self, alias: str) -> None:
+        with self._lock:
+            self._db.execute("DELETE FROM bindings WHERE alias=?", (alias,))
+
+    def set_payee(self, auction_id: str, seller: str) -> None:
+        with self._lock:
+            self._db.execute(
+                "INSERT INTO payees(auction_id, seller) VALUES(?,?) ON CONFLICT(auction_id) DO UPDATE SET seller=excluded.seller",
+                (auction_id, seller),
+            )
+
+    def payee(self, auction_id: str) -> str | None:
+        with self._lock:
+            row = self._db.execute("SELECT seller FROM payees WHERE auction_id=?", (auction_id,)).fetchone()
+        return None if row is None else str(row["seller"])
+
+    def insert_payment(self, row: dict[str, Any]) -> None:
+        columns = ", ".join(row)
+        with self._lock:
+            self._db.execute(f"INSERT OR IGNORE INTO payments({columns}) VALUES({', '.join('?' for _ in row)})", tuple(row.values()))
+
+    _PAYMENT_FIELDS = frozenset({"payer", "status", "reason", "tx_hash", "settled_at"})
+
+    def update_payment(self, auction_id: str, **fields: Any) -> None:
+        assert fields and set(fields) <= self._PAYMENT_FIELDS
+        with self._lock:
+            self._db.execute(
+                f"UPDATE payments SET {', '.join(f'{k}=?' for k in fields)} WHERE auction_id=?",
+                (*fields.values(), auction_id),
+            )
+
+    def payment(self, auction_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._db.execute("SELECT * FROM payments WHERE auction_id=?", (auction_id,)).fetchone()
+        return None if row is None else dict(row)
+
+    def payment_by_tx(self, tx_hash: str) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._db.execute("SELECT * FROM payments WHERE tx_hash=?", (tx_hash,)).fetchone()
+        return None if row is None else dict(row)
+
+    def payments(self, status: str | None = None, limit: int = 1000) -> list[dict[str, Any]]:
+        with self._lock:
+            if status is None:
+                rows = self._db.execute("SELECT * FROM payments ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
+            else:
+                rows = self._db.execute("SELECT * FROM payments WHERE status=? ORDER BY created_at DESC LIMIT ?", (status, limit)).fetchall()
         return [dict(r) for r in rows]

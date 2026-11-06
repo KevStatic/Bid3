@@ -5,6 +5,7 @@ import { useMemo } from "react";
 import type { Listing, Result } from "./arkiv";
 import { config } from "./config";
 import { formatMinor } from "./format";
+import type { Payment, PaymentStatus } from "./payments-shared";
 import { useResults } from "./use-arkiv";
 
 /**
@@ -15,7 +16,9 @@ import { useResults } from "./use-arkiv";
 export type LotState =
   | { kind: "live"; priceMinor: number; bidCount: number; leaderAlias: string | null }
   | { kind: "upNext" }
-  | { kind: "sold"; priceMinor: number; winnerAlias: string | null }
+  | { kind: "sold"; priceMinor: number; winnerAlias: string | null; payment?: PaymentStatus }
+  /** Won, but the winner didn't pay (payments.py), so the lot stays with the seller. */
+  | { kind: "unpaid"; priceMinor: number; winnerAlias: string | null; reason: string }
   | { kind: "unsold" }
   | { kind: "cancelled" };
 
@@ -27,6 +30,8 @@ export interface EngineLot {
   priceMinor: number;
   bidCount: number;
   leaderAlias?: string | null;
+  /** The Sepolia payment for a sold lot. Missing on engines without payments; null when there is none. */
+  payment?: Payment | null;
 }
 
 /** Every lot the engine knows, polled every 5 s. Disabled without an engine URL. */
@@ -49,7 +54,10 @@ export function lotStateOf(auctionId: string, engineLots: Map<string, EngineLot>
   if (lot) {
     switch (lot.phase) {
       case "SOLD_LOCKED":
-        return { kind: "sold", priceMinor: lot.priceMinor, winnerAlias: lot.leaderAlias ?? null };
+        if (lot.payment?.status === "UNPAID") {
+          return { kind: "unpaid", priceMinor: lot.priceMinor, winnerAlias: lot.leaderAlias ?? null, reason: lot.payment.reason ?? "No payment" };
+        }
+        return { kind: "sold", priceMinor: lot.priceMinor, winnerAlias: lot.leaderAlias ?? null, payment: lot.payment?.status };
       case "UNSOLD":
         return { kind: "unsold" };
       case "CANCELLED":
@@ -90,8 +98,12 @@ export function lotStateLine(state: LotState): string {
         : `${state.bidCount} ${state.bidCount === 1 ? "bid" : "bids"}, Paddle ${state.leaderAlias} at ${formatMinor(state.priceMinor)}`;
     case "upNext":
       return "Waiting for the auctioneer to open bidding";
-    case "sold":
-      return state.winnerAlias ? `Sold to Paddle ${state.winnerAlias} for ${formatMinor(state.priceMinor)}` : `Sold for ${formatMinor(state.priceMinor)}`;
+    case "sold": {
+      const sold = state.winnerAlias ? `Sold to Paddle ${state.winnerAlias} for ${formatMinor(state.priceMinor)}` : `Sold for ${formatMinor(state.priceMinor)}`;
+      return state.payment === "PAID" ? `${sold}, paid` : state.payment === "DUE" ? `${sold}, waiting for payment` : sold;
+    }
+    case "unpaid":
+      return `Won by Paddle ${state.winnerAlias} at ${formatMinor(state.priceMinor)}, not paid. Stays with the seller`;
     case "unsold":
       return "No bids in time. Back with the seller";
     case "cancelled":
@@ -100,4 +112,4 @@ export function lotStateLine(state: LotState): string {
 }
 
 /** Live first, then up next, then everything that has closed. */
-export const LOT_STATE_ORDER: Record<LotState["kind"], number> = { live: 0, upNext: 1, sold: 2, unsold: 3, cancelled: 4 };
+export const LOT_STATE_ORDER: Record<LotState["kind"], number> = { live: 0, upNext: 1, sold: 2, unpaid: 3, unsold: 3, cancelled: 4 };

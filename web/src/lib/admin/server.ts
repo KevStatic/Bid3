@@ -43,7 +43,15 @@ export function requireAdmin(request: Request): void {
   }
 }
 
-async function engine(path: string, method: "GET" | "POST" = "GET", json?: unknown): Promise<Record<string, unknown>> {
+/** For the public payment routes: they need the engine and its token, but no admin password. */
+export function requireEngine(): void {
+  if (!process.env.ADMIN_TOKEN || !config.engineHttpUrl) {
+    throw new AdminError(503, "Payments aren't set up on this site yet (ADMIN_TOKEN or the engine URL is missing).");
+  }
+}
+
+/** Calls the engine with the operator token. Engine refusals (400/409) come back as 409 with the engine's reason. */
+export async function engine(path: string, method: "GET" | "POST" = "GET", json?: unknown): Promise<Record<string, unknown>> {
   let response: Response;
   try {
     response = await fetch(`${config.engineHttpUrl}${path}`, {
@@ -62,12 +70,13 @@ async function engine(path: string, method: "GET" | "POST" = "GET", json?: unkno
   const body = (await response.json().catch(() => ({}))) as Record<string, unknown>;
   if (!response.ok) {
     const detail = typeof body.detail === "string" ? body.detail : `The engine answered ${response.status}.`;
-    throw new AdminError(response.status === 400 || response.status === 409 ? 409 : 502, detail);
+    throw new AdminError(response.status === 400 || response.status === 409 ? 409 : response.status === 404 ? 404 : 502, detail);
   }
   return body;
 }
 
 const ID = /^[A-Za-z0-9._-]{1,64}$/;
+const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 
 export interface StartInput {
   auctionId: string;
@@ -75,6 +84,8 @@ export interface StartInput {
   category: string;
   startPriceMinor: number;
   timeLimitMs: number;
+  /** The listing's seller wallet: a payment for this lot goes there. */
+  sellerAddress?: string;
 }
 
 export function parseStartInput(body: unknown): StartInput {
@@ -85,6 +96,7 @@ export function parseStartInput(body: unknown): StartInput {
     category: typeof b.category === "string" ? b.category.slice(0, 40) : "Other",
     startPriceMinor: b.startPriceMinor,
     timeLimitMs: b.timeLimitMs,
+    sellerAddress: typeof b.sellerAddress === "string" && ADDRESS.test(b.sellerAddress) ? b.sellerAddress : undefined,
   };
   if (typeof input.auctionId !== "string" || !ID.test(input.auctionId)) throw new AdminError(400, "Missing or invalid auctionId.");
   if (typeof input.listingId !== "string" || !ID.test(input.listingId)) throw new AdminError(400, "Missing or invalid listingId.");
@@ -119,6 +131,7 @@ export async function startLot(input: StartInput): Promise<{ auctionId: string; 
       unit: "credits",
     },
     seats: PADDLE_ROSTER,
+    ...(input.sellerAddress ? { sellerAddress: input.sellerAddress } : {}),
   });
   const opened = await engine(`/auctions/${encodeURIComponent(input.auctionId)}/open`, "POST");
   return { auctionId: input.auctionId, phase: String((opened.state as { phase?: string } | undefined)?.phase ?? "OPEN") };

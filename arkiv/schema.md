@@ -1,6 +1,6 @@
 # Bid3 on Arkiv: schema
 
-Bid3 keeps five entity types on Arkiv (Rabdi testnet, chain 7794095). They are defined once in `web/src/lib/arkiv/schemas.ts`. The Arkiv worker uses an identical copy, checked by `npm run check-schemas`, so reads and writes can't drift.
+Bid3 keeps six entity types on Arkiv (Rabdi testnet, chain 7794095). They are defined once in `web/src/lib/arkiv/schemas.ts`. The Arkiv worker uses an identical copy, checked by `npm run check-schemas`, so reads and writes can't drift.
 
 Only `.indexed()` attributes can be filtered on. Each indexed attribute below exists because a page filters or sorts by it.
 
@@ -11,6 +11,7 @@ Only `.indexed()` attributes can be filtered on. Each indexed attribute below ex
 | `AuctionBid` (`bid3.bid`) | Bid3 publisher wallet | 7 days | read-only |
 | `AuctionSnapshot` (`bid3.snapshot`) | Bid3 publisher wallet | 10 minutes | none |
 | `AuctionResult` (`bid3.result`) | Bid3 publisher wallet | 90 days | read-only, anyone may extend |
+| `AuctionSettlement` (`bid3.settlement`) | Bid3 publisher wallet | 90 days | read-only, anyone may extend |
 
 ## ItemListing
 
@@ -81,6 +82,24 @@ The rules hash is sha256 over canonical JSON of `auctionId, epoch, listingId, st
 | bidCount | u64 | | results page checks it against the AuctionBid entities |
 | rulesHash | str | | results page checks it against the definition |
 | transcriptDigest | str | | sha256 over the accepted bids (oldest first, compact JSON, sorted keys) |
+
+## AuctionSettlement
+
+The payment for a sold lot. The winning paddle's wallet (linked by tapping the paddle's NFC sticker) pays the seller's wallet on **Sepolia**; this entity records the outcome on Arkiv, next to the result. Written only when the engine runs with `PAYMENTS=1`. `PAID` and `UNPAID` are final; `UNPAID` means the lot stayed with the seller.
+
+| Attribute | Type | Indexed | Used by |
+|---|---|---|---|
+| auctionId | str | yes | joins to the AuctionResult |
+| epoch | u64 | yes | |
+| status | str (`PAID`, `UNPAID`) | yes | |
+| settledAtMs | u64 | yes | |
+| winnerAlias | str | | |
+| payer | str (address, or empty) | | the winner's linked wallet |
+| payee | str (address, or empty) | | the seller's wallet |
+| amountWei | str | | decimal wei; 0 at the default rate (only gas) |
+| chainId | u64 | | 11155111 (Sepolia) |
+| txHash | str | | the Sepolia transaction, checkable on sepolia.etherscan.io (its data is the UTF-8 memo `bid3:<auctionId>`) |
+| reason | str | | why it's UNPAID |
 
 ## Example query
 
