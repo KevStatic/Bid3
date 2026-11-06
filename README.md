@@ -1,47 +1,14 @@
 # Bid3
 
-## The energy of a live auction. The proof of an open ledger.
+**A live auction you bid in by pressing a physical paddle, with every listing, bid and hammer price on Arkiv, so anyone can check the result without trusting us.**
 
-Bid3 is a physical-first auction experience where guests bid with handheld
-ESP32 paddles and every accepted bid is independently verifiable on Arkiv.
-It keeps the theatre of an auction room while replacing the usual opaque bid
-log with a public, tamper-evident record.
-
-Built at ETHGlobal Mumbai in November 2026.
+Built at ETHGlobal Mumbai (November 2026).
 
 | | |
 |---|---|
 | Live app | **TODO (Kev):** Vercel URL |
 | Demo video (≤ 3 min) | **TODO (Kev):** link |
 | Arkiv track | Build on Arkiv (from scratch) |
-
-## Why Bid3
-
-Traditional live auctions ask everyone in the room to trust the auctioneer's
-screen, private database and final announcement. Bid3 makes that trust
-inspectable without putting blockchain latency in the bidding loop.
-
-- **Feels physical:** switch on a paddle to join and press one button to bid.
-- **Stays fast:** the local auction engine controls ordering, pricing and the
-  hammer countdown in real time.
-- **Fails safely:** one faulty paddle is isolated; an infrastructure outage
-  pauses the whole room instead of producing an uncertain winner.
-- **Proves the outcome:** listings, rules, accepted bids and results are
-  published to Arkiv and checked again in the browser.
-- **Works as a demo or a product:** run it with real hardware, a keyboard
-  bridge, or a clearly labelled browser simulation.
-
-## Who it is for
-
-Bid3 is designed for charity galas, community fundraisers, conferences,
-collectible drops and pop-up events that want the excitement of in-person
-bidding with a result that participants can verify afterward.
-
-## Product experience
-
-| Before the auction | During the auction | After the hammer |
-|---|---|---|
-| A seller publishes the lot and auction rules. Guests receive named paddles. | Guests join with the slide switch and bid with one press. The room display shows price, leader, countdown and system health. | The result explorer rebuilds the price ladder, checks every bid and verifies the full transcript against Arkiv. |
 
 ## How a round works
 

@@ -152,12 +152,6 @@ With no env, the web app runs a labelled in-browser simulation and bundled sampl
 
 ## Changelog
 
-### 2026-11-07: product-first README branch
-- Pulled the latest `origin/main` and created the `product` branch for a README-focused change.
-- Reworked the top of `README.md` into a product-facing introduction: value proposition, target users, product experience, reliability model and verifiable-results story. The existing Arkiv, architecture, setup, hardware, disclosure and license sections remain intact.
-- The user explicitly authorized committing this feature branch, pushing it, and opening a PR for Kev to review and merge, as a one-time exception to the normal Kev-only Git rule.
-- No runtime code or section 4 contract changed, so the drift checks were not required. Open README placeholders for the live URL, demo video, measured latency and final team disclosures remain unchanged.
-
 ### 2026-11-07 ~01:45 IST: new-lot.sh picks the next number
 - `scripts/new-lot.sh` with no argument asks the engine's `GET /auctions` for the highest `bid3-NNN` and opens the next one. Right now that's 6 (it has 3, 4 and 5; `bid3-hw-01` is ignored). An explicit number still works.
 - **Checked:** the number it picks, rejected arguments, and refusal of an existing ID. The no-argument path wasn't run end to end, because that would open a real lot.
