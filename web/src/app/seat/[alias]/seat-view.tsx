@@ -35,7 +35,7 @@ export function SeatView({ alias }: { alias: string }) {
   else if (won) status = { text: "You won this lot", tone: "text-ink" };
   else if (state.phase === "SOLD_LOCKED") status = { text: `Sold to Paddle ${state.result?.winnerAlias}`, tone: "text-ink-2" };
   else if (leading) status = { text: "You're leading", tone: "text-ink" };
-  else if (me.status === "ACTIVE") status = { text: state.phase === "LOBBY" ? "You're in. Waiting for another paddle." : "You're in. Press BID to raise.", tone: "text-live" };
+  else if (me.status === "ACTIVE") status = { text: state.phase === "LOBBY" ? "You're in. Bidding opens in a moment." : "You're in. Press BID to raise.", tone: "text-live" };
   else if (me.status === "UNKNOWN") status = { text: "Signal lost. Hold the tag closer to the gateway.", tone: "text-halt" };
   else status = { text: "Switched off. Slide the switch to join.", tone: "text-ink-2" };
 

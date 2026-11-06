@@ -1,23 +1,26 @@
-import { TagIllustration } from "@/components/tag-illustration";
+import Image from "next/image";
+import { HeroHeadline } from "@/components/hero-headline";
+import { GatewayPhoto } from "@/components/gateway-photo";
+import { AnimatedGrid } from "@/components/ui/animated-grid";
 import { ButtonLink, Container } from "@/components/ui";
-import { FeaturedLotCard, FeaturedRoomButton } from "./featured-live";
+import { FeaturedRoomButton } from "./featured-live";
 import { RecentResults } from "./recent-results";
 
 const STEPS = [
   {
     title: "Switch your paddle on",
-    body: "Slide the switch to join the room. The light glows steady once the room has you. Two paddles on and bidding opens.",
-    tag: { switchOn: true, pressed: false, led: "steady" as const, alias: "K7" },
+    body: "Slide the switch to join the room. The light glows steady once the room has you. Bidding starts when the auctioneer opens the round.",
+    tagLabel: "TAG01",
   },
   {
     title: "Press BID to raise",
     body: "Each press bids the next price, 5% above the last. You can't outbid yourself, and a stale press is refused so you never bid a price you didn't see.",
-    tag: { switchOn: true, pressed: true, led: "lead" as const, alias: "K7" },
+    tagLabel: "TAG02",
   },
   {
     title: "Hold the lead to the hammer",
     body: "Every bid restarts the call: going once, going twice, sold. If nobody presses before it ends, the leading paddle wins at that price.",
-    tag: { switchOn: true, pressed: false, led: "lead" as const, alias: "K7" },
+    tagLabel: "TAG03",
   },
 ];
 
@@ -30,15 +33,12 @@ const ON_ARKIV = [
 
 export default function Home() {
   return (
-    <>
+    <div className="relative isolate">
+      <AnimatedGrid color="var(--line)" accent="var(--cobalt)" opacity={0.5} fade={false} glow={false} className="-z-10" />
       <Container className="pt-10 sm:pt-16">
         <div className="grid grid-cols-[minmax(0,1fr)] items-center gap-10 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)] lg:gap-16">
           <div className="min-w-0">
-            <h1 className="text-[2.6rem] font-extrabold leading-[1.02] sm:text-6xl lg:text-[4.1rem]">
-              <span className="block">Hold a paddle.</span>
-              <span className="block">Press to bid.</span>
-              <span className="block">Last bid standing wins.</span>
-            </h1>
+            <HeroHeadline />
             <p className="mt-6 max-w-xl text-lg text-ink-2 sm:text-xl">
               Bid3 runs a live auction from physical tags. Every listing, bid and hammer price is written to Arkiv, so anyone can
               check the result without asking us.
@@ -50,7 +50,7 @@ export default function Home() {
               </ButtonLink>
             </div>
           </div>
-          <FeaturedLotCard />
+          <GatewayPhoto />
         </div>
       </Container>
 
@@ -61,9 +61,27 @@ export default function Home() {
         <ol className="mt-10 grid gap-6 md:grid-cols-3">
           {STEPS.map((step, i) => (
             <li key={step.title} className="flex flex-col rounded-panel border border-line bg-surface p-6">
-              <div className="flex items-start justify-between">
-                <span className="font-narrow tabular text-5xl font-extrabold leading-none text-ink-3">{i + 1}</span>
-                <TagIllustration {...step.tag} className="-mr-2 -mt-2 w-24" />
+              <div className="relative flex justify-center">
+                <span className="font-narrow tabular absolute left-0 top-0 text-5xl font-extrabold leading-none text-ink-3">{i + 1}</span>
+                <figure className="flex flex-col items-center">
+                  <div className="relative aspect-[1086/1448] h-56">
+                    <Image
+                      src="/images/tag-cutout.png"
+                      alt={`${step.tagLabel} physical BID3 paddle with NFC, bid button and green status light`}
+                      width={1086}
+                      height={1448}
+                      sizes="180px"
+                      className="h-full w-full object-contain"
+                    />
+                    <span
+                      aria-hidden="true"
+                      className="pointer-events-none absolute flex items-center justify-center text-[9px] font-extrabold leading-none tracking-[0.025em] text-[#171b16]"
+                      style={{ left: "36.4%", top: "90.8%", width: "25.5%", height: "5.4%" }}
+                    >
+                      {step.tagLabel}
+                    </span>
+                  </div>
+                </figure>
               </div>
               <h3 className="mt-4 text-xl font-bold">{step.title}</h3>
               <p className="mt-2 text-ink-2">{step.body}</p>
@@ -71,8 +89,8 @@ export default function Home() {
           ))}
         </ol>
         <p className="mt-5 max-w-2xl text-sm text-ink-3">
-          Switching off stops you bidding but doesn&apos;t withdraw a bid that&apos;s leading. If a paddle&apos;s signal drops, the room
-          pauses instead of handing the lot to someone else.
+          Switching off stops you bidding but doesn&apos;t withdraw a bid that&apos;s leading. If a paddle&apos;s signal drops, only that
+          bidder is blocked while bidding continues. A gateway, bridge or engine outage pauses the room.
         </p>
       </Container>
 
@@ -115,6 +133,6 @@ export default function Home() {
           </ButtonLink>
         </div>
       </Container>
-    </>
+    </div>
   );
 }

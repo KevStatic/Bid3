@@ -23,6 +23,7 @@ A live auction run with physical paddle tags, built for **ETHGlobal Mumbai (Nov 
 | Sponsor | **Arkiv only** (one Arkiv track prize + optional Swarm bonus) | `arkiv/` |
 | Track | **Build on Arkiv (from scratch)** (Kev, Fri 6 Nov ~19:30). Requires ETHGlobal's Classic rules: no pre-existing project-specific code; see the changelog entry "track and rules" | `README.md`, `arkiv/` |
 | Button | **Press = bid at the next step** (not a jump bid on a running clock) | engine `auction.py` |
+| Who opens bidding | **The auctioneer**, on one lot at a time, from the website's `/admin` page (password). Bidding is open at once; no minimum number of paddles; any seated paddle can join at any time and bid. A **lone bidder wins** at their bid. A **no-bid timer** (1/2/5/10 min, chosen by the auctioneer) runs from opening; with no bid the lot closes UNSOLD and goes back to the seller (Kev, Sat 7 Nov ~02:15) | engine `auction.py`, `web/src/app/admin/` |
 | Leader switches OFF | **Bid stays binding**; they can still win | engine `auction.py` |
 | Step | **+5% per bid** (500 bps), configurable per auction | rules |
 | Countdown | V6 hardware rounds use 10 s via published countdownMs=10000; unchanged engine seed defaults to 5 s unless SEED_COUNTDOWN_MS=10000 | auction rules / engine env |
@@ -67,6 +68,9 @@ Planning documents (outside the repo): `/Users/kev/Hackathons/EthGlobal/Plans/`.
 | Arkiv entity schemas (5 types) | `web/src/lib/arkiv/schemas.ts` | `arkiv-worker/src/schemas.ts` (identical copy) |
 | Serial protocol (115200; AUCTION_EVENT/STATE/ACK_JSON, session-correlated ACKs, AUCTION_STATUS/BRIDGE_JSON, CMD=STATUS) | `bridge/README.md` | gateway firmware |
 | Outbox (`GET /outbox`, `POST /outbox/{id}/published`) | `engine/bid3_engine/api.py` | `arkiv-worker/src/index.ts` |
+| Public lot list `GET /auctions` (auctionId, listingId, phase, priceMinor, bidCount, leaderAlias) | `engine/bid3_engine/api.py` | `web/src/lib/lot-state.ts` (`EngineLot`) |
+| Admin calls (`POST /auctions`, `/open`, `/cancel` with `ADMIN_TOKEN`; house rules 5% / 10 s / ceiling 10× opening) | `engine/bid3_engine/api.py` | `web/src/lib/admin/server.ts` |
+| Paddle roster (tagRef, alias, publicKey per seat) | `firmware/integration/auction-template.json` | `web/src/lib/admin/paddles.ts`. Check: `jq -c '[.seats[] \| {tagRef, alias, publicKey}]' firmware/integration/auction-template.json` and compare |
 
 V6 firmware retains the V4 AUCTION serial contract and remains compatible with the existing bridge. Each JOIN/LEAVE/BID is signed using the existing engine Bid3.Intent.v1 format; enable INTENT_SIGNATURES_REQUIRED and enroll the seat public keys. The engine remains the sole auction authority. V6 templates use a 10-second countdown; existing frozen auctions and the engine's 5-second seed default are not changed silently. V1 signatures do not include auctionId/epoch: one active lot and drained pending requests are required before switching lots. Cross-round replay protection remains a coordinated engine-contract follow-up.
 
@@ -84,7 +88,9 @@ Checks that catch drift:
 | `engine` | `cd engine && set -a && source .env && set +a && caffeinate -i .venv/bin/python -m bid3_engine` | `Uvicorn running on http://0.0.0.0:8010` |
 | `worker` | `cd arkiv-worker && npm start` | `Writing to Arkiv as 0xCf11CEa33b48A48901DD2a03730524a69E64e32d` |
 | `bridge` | `cd bridge && set -a && source ../engine/.env && set +a && ../engine/.venv/bin/python bid3_bridge.py --port /dev/cu.usbserial-<n> --engine ws://localhost:8010 --token "$BRIDGE_TOKEN"` | `/health` shows `bridgeConnected: true` |
-| `ops` | `scripts/tunnel.sh` (once); `scripts/new-lot.sh <n>` for each round; `curl -s localhost:8010/health \| jq` | the tunnel script prints ✅ for the engine and the site |
+| `ops` | `scripts/tunnel.sh` (once). Then run lots from **`https://bid3.vercel.app/admin`** ("Open bidding" per lot). Fallbacks: `scripts/new-lot.sh` / `scripts/auto-rounds.sh` (create their own keyboard listing, no admin) | the tunnel script prints ✅ for the engine and the site |
+
+**Admin page:** needs two **server** env vars in Vercel, both type Secret and without the `NEXT_PUBLIC_` prefix: `ADMIN_TOKEN` (the same value as in `engine/.env`) and `ADMIN_PASSWORD` (Kev's choice). The browser sends the password to `/api/admin/*`; the server calls the engine through the tunnel with the token. The demo catalogue is `npm run seed-catalogue` in `arkiv-worker` (six items, lots 11–16, `bid3-cat-NN`; safe to rerun).
 
 **Tunnel:** `scripts/tunnel.sh` runs `cloudflared` in the background, outside any terminal (log: `~/Library/Logs/bid3-tunnel.log`).
 - Closing terminals or restarting the engine, worker or bridge doesn't change its URL. Only a reboot or `scripts/tunnel.sh stop` does.
@@ -151,6 +157,110 @@ With no env, the web app runs a labelled in-browser simulation and bundled sampl
 ---
 
 ## Changelog
+
+### 2026-11-07: integrate current main for the landing-page PR
+- The user's PR request authorizes the routine integration commit and branch push. Merged current main into frontend without rewriting history and resolved the sole shared-log conflict by preserving both sets of entries.
+- Updated the landing step's opening explanation to match main's existing auctioneer-led rules. No backend implementation edits were authored: engine, bridge, worker and firmware match main. The PR diff is limited to web/ and this log.
+- Re-ran ESLint, TypeScript and an isolated optimized production build successfully after integration, including main's admin routes. The pull request targets main; this preparation does not merge the PR.
+
+### 2026-11-07: prepare the landing-page work for origin/frontend
+- The user explicitly requested committing and pushing this frontend work to the existing frontend branch, authorizing those actions over the usual Kev-only convention. Started from the current origin/frontend head; no main merge, history rewrite or backend/firmware changes are included.
+- Completed the frontend review: corrected the landing-page signal-loss explanation to match the existing isolated-paddle policy, replaced the old browser icon with the approved logo, and documented product-image provenance, OLED export steps and font attribution in web/public/ASSETS.md.
+- Validation passed: ESLint, TypeScript, isolated optimized production build, production browser checks at desktop/mobile widths, responsive photo loading, the new icon route and OLED pause/play. The production browser reported no console errors. The local dev server remained running throughout the isolated build.
+
+### 2026-11-07: remove duplicate tag captions
+- Removed the yellow TAG01/TAG02/TAG03 captions below the landing-card photos. The IDs remain on each physical label and in image alt text. Frontend-only change.
+
+### 2026-11-07: IDs on the tag photographs
+- Positioned TAG01, TAG02 and TAG03 directly over the blank physical label in each landing-page tag photo. The labels scale with the photo container; the existing accessible captions remain below. Frontend-only change.
+
+### 2026-11-07: real tag photographs in the how-it-works cards
+- Retouched IMG_5674.jpg as the primary tag photo, with IMG_5667.jpg as the sharp-detail/lighting reference, using the built-in image editing tool. Saved the transparent cutout in web/public/images/tag-cutout.png; originals are preserved. Cleared the old physical TAG02 lettering so separate page captions can identify each card consistently.
+- Replaced the three landing-page tag illustrations with the photograph and centred TAG01, TAG02 and TAG03 captions beneath it. Retained the step numbers, titles and explanatory copy. Verified image loading, labels, desktop/mobile layout and no horizontal overflow; TypeScript and page ESLint pass. No backend, firmware, engine, bridge, worker or protocol files changed.
+- A downloadable copy and the exact edit prompt are saved under the workspace outputs/product-images folder.
+
+### 2026-11-07: animate the gateway photograph's OLED
+- Added web/src/components/gateway-photo.tsx: a precisely positioned 128x64 canvas replaces only the photographed OLED content. The original gateway photo remains intact. Includes a labelled firmware preview, pause/play, reduced-motion still, offscreen/hidden-tab suspension and static-photo fallback.
+- Exported 545 original firmware framebuffers at Config::DISPLAY_FPS (25 fps) using the read-only frontend exporter web/scripts/render-gateway-oled.cpp. The 21.8 s loop contains the real startup and three idle scenes, with no fake bidders or bid decisions. Static data and font attribution are in web/public/animations/. Rebuild from web with clang++ -std=c++17 scripts/render-gateway-oled.cpp -o /tmp/bid3-oled-export, then /tmp/bid3-oled-export public/animations/gateway-oled.bin.
+- Verified exporter metadata/size, TypeScript, page/component ESLint, desktop and mobile alignment and playback controls. No backend, firmware, engine, bridge, worker or protocol files were changed; the existing firmware renderer was read only.
+
+### 2026-11-07: gateway photo in the landing hero
+- Replaced only the landing hero's featured lot card with the owner's edited transparent gateway photograph at web/public/images/gateway-cutout.png. Uses responsive Next Image sizing, intrinsic dimensions and descriptive alt text. The live-room link remains available beside the headline.
+- Verified desktop and 390 px layouts, image loading and no horizontal overflow; TypeScript and page ESLint pass. No backend, protocol, engine, bridge, worker or firmware changes.
+
+### 2026-11-07: cursor-local headline colour
+- Added HeroHeadline with a soft 110 px yellow text mask that follows the pointer and fades in/out over 300 ms. All headline text rests in the default ink colour; only letters near the cursor turn yellow. Scoped styles live in globals.css to match the project's Tailwind loader.
+- Pointer updates are batched through animation frames without React renders; the decorative duplicate is hidden from assistive technology. Touch uses the normal headline, reduced motion disables the transition, and forced colours hide the overlay. Browser checks confirm local masking and fade-out without overflow; TypeScript and ESLint pass.
+
+### 2026-11-07: balance the headline accent
+- Replaced scattered yellow words with one continuous yellow phrase, Press to bid, to give the landing headline a clear focal point.
+
+### 2026-11-07: highlight the hero's key words
+- Applied the existing yellow paddle colour to paddle, bid and wins in the landing-page headline, keeping its bold typography and wording.
+
+### 2026-11-07: small logo gap adjustment
+- Added 4 px of breathing room between the header symbol and Bid3 in web/src/components/brand.tsx at the owner's request.
+
+### 2026-11-07: tighten header logo spacing
+- Removed the wordmark gap and compensated for the PNG's transparent right margin in web/src/components/brand.tsx so the symbol sits directly beside Bid3.
+
+### 2026-11-07: final logo and flat grid background
+- Added the owner's supplied transparent PNG as web/public/brand/bid3-logo.png and replaced the shared header/footer paddle mark with that image in web/src/components/brand.tsx. Adjusted the footer mark size for its transparent margins.
+- Added an optional glow prop to AnimatedGrid and disabled it on the landing page, removing the bright ambient patch while retaining the animated grid. Verified the logo loads and the glow is absent at desktop and 390 px widths; TypeScript and ESLint pass.
+
+### 2026-11-07: landing-page animated grid background
+- Added the supplied CSS-only AnimatedGrid component in web/src/components/ui/animated-grid.tsx and placed it behind the landing page in web/src/app/page.tsx. Uses the existing line/cobalt theme tokens; no new dependencies or changes to page content and auction behaviour.
+- Kept the backdrop decorative and pointer-transparent, with scoped reduced-motion and forced-colour rules. Verified desktop and 390 px layouts without horizontal overflow; TypeScript and ESLint pass. No open items for this change.
+
+### 2026-11-07 ~03:30 IST: auctioneer opens bidding; catalogue of real lots; sellers from any wallet
+Kev asked for this (Sat ~02:15). He also asked that working code not be disturbed, so every part below was tested before being called done.
+
+- **Engine rules (`engine/bid3_engine/auction.py`):**
+  - `open()` goes straight to OPEN: the operator declares bidding open.
+  - No two-paddle minimum: joining no longer opens bidding, and leaving no longer sends the lot back to LOBBY.
+  - Resuming with no leader returns to OPEN.
+  - The "two paddles were never on together" closing check is removed, so a **lone bidder wins** at their bid.
+  - The no-bid timer (`timeLimitMs`) was already counted from opening and already closes the lot UNSOLD.
+  - A lot an older engine left in LOBBY opens on its first JOIN.
+  - `hadCompetition` is still tracked but no longer required. It isn't part of AuctionResult, so the Arkiv contract is unchanged.
+- **`GET /auctions`** now also returns `leaderAlias`, an extra field.
+- **Engine tests:** 4 updated to the new rule, 5 added (lone bidder wins; timer from opening; joining mid-countdown can bid; leaving doesn't close bidding; old LOBBY lot opens on join). `pytest` 49 passed. Firmware `test_current_engine_v4` OK, bridge 2 passed, vectors unchanged, `check-schemas` OK.
+- **Web rules wording and simulator** match the engine (`simulator.ts`, `phase-copy.ts`, seat page, simulation controls).
+- **Lots page:**
+  - New `web/src/lib/lot-state.ts` gives each lot's real state: from the engine's `GET /auctions` (polled every 5 s), otherwise from publisher-owned AuctionResults on Arkiv, otherwise "Up next".
+  - The lot card shows Live now / Up next / Sold to Paddle X for Y / Unsold, back with the seller.
+  - The status chips filter on that state. Category and price filters are still Arkiv queries.
+  - Listings and results refetch every 15 s, so new listings reach every viewer.
+- **Six demo items** (`arkiv-worker/src/seed-catalogue.ts`, `npm run seed-catalogue`): lots 11–16, `bid3-cat-11`…`16`, `item-11`…`16`, status UPCOMING, listed for 7 days, owned by the publisher. Written to Arkiv at ~03:00; a second run skipped all six.
+- **Admin page `/admin`:** password sign-in, "On the block" with Withdraw, the no-bid timer (1/2/5/10 min), and the lot list with "Open bidding" on Up-next lots.
+  - Server routes `/api/admin/{login,start,cancel}` and `web/src/lib/admin/server.ts`. `ADMIN_TOKEN` and `ADMIN_PASSWORD` stay on the server.
+  - It refuses to start while another lot is still running.
+  - It seats the paddle roster (`web/src/lib/admin/paddles.ts`, checked identical to the firmware template) with house rules: 5%, 10 s, ceiling 10× the opening bid.
+  - Tested the route handlers against a fake engine: not configured gives 503; wrong password 401; a bad timer or ID 400; another lot running 409; withdraw works; start creates the right body and then opens; a duplicate lot gives 409; every engine call carries the token.
+- **Sell an item:** one form (title, category, condition, opening bid, description), published from the connected wallet.
+  - It switches the wallet to Rabdi, adding the network if needed, and shows friendly errors for no tGLM (with a faucet link) and a cancelled signature.
+  - Lot numbers continue after the highest listed.
+  - "Your lots" shows the seller each outcome; unsold lots say "back with you". This is the seller's notification.
+  - The old Rules, Paddles, Readiness and operator `curl` steps are gone: the auctioneer applies house rules from the admin page.
+- **Web checks:** whole-app `tsc` and `eslint` clean; `next build` passes (in a scratch copy; Kev's `web/.next` untouched).
+- **Not tested:**
+  - In a browser: the admin page, the new Lots page and the seller page.
+  - A real seller publish from MetaMask: the switch to Rabdi, gas, the write.
+  - The new engine rules with the real paddles.
+- **To go live:**
+  1. Stop `auto-rounds` and restart the engine; the new rules need it. Lot `bid3-007`, left in LOBBY by the old rules, then opens on the first JOIN; withdraw it from `/admin` if not wanted.
+  2. Add `ADMIN_TOKEN` and `ADMIN_PASSWORD` in Vercel.
+  3. Commit and push.
+- **Not updated (Sanskar's, checksummed):** `firmware/BIDDING_RULES.md` line 8 still says fewer than two bidders means LOBBY, and `FAST_PROTOCOL.md` and `VALIDATION.md` mention LOBBY. The firmware works unchanged: it just shows OPEN sooner.
+
+### 2026-11-07 ~02:05 IST: automatic back-to-back rounds
+- **New `scripts/auto-rounds.sh`:** opens the next lot (via `new-lot.sh`) and prints a line whenever the phase, bid count, leader or paddles change.
+  - After a sale it waits `PAUSE_S` (default 20 s), then opens the next lot.
+  - It stops by itself when a lot closes UNSOLD or CANCELLED, so an unattended room doesn't keep publishing empty lots to Arkiv.
+  - If a lot is already running when it starts, it watches that lot first. `--watch <id>` only shows one lot's progress.
+- **No paddle toggling between lots:** confirmed in `bridge/bid3_bridge.py` that the bridge sends `CMD=STATUS` when the `auctionId` changes, which asks the gateway to re-announce switched-on tags. The open Live room page follows to each new lot.
+- **Checked under macOS bash 3.2:** `--watch` on three closed lots returns at once with the right lines, and the stop and continue rules work. **Not checked:** the full loop, because it opens real lots on the engine and Arkiv. Its first real run will be the test.
+- **Merge check:** Kev's merge of PR #2 kept both sets of log entries, and there are no conflict markers left.
 
 ### 2026-11-07 ~01:45 IST: new-lot.sh picks the next number
 - `scripts/new-lot.sh` with no argument asks the engine's `GET /auctions` for the highest `bid3-NNN` and opens the next one. Right now that's 6 (it has 3, 4 and 5; `bid3-hw-01` is ignored). An explicit number still works.

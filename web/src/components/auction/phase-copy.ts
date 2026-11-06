@@ -8,9 +8,11 @@ export function phaseHeadline(state: AuctionState): string {
     case "DRAFT":
       return "This lot is being set up";
     case "LOBBY":
-      return active === 0 ? "Waiting for paddles to switch on" : "Waiting for one more paddle";
+      return "Bidding opens when the first paddle switches on";
     case "OPEN":
-      return `Bidding is open. The first press bids ${formatMinor(state.nextPriceMinor)}.`;
+      return active === 0
+        ? `Bidding is open. Switch a paddle on to bid ${formatMinor(state.nextPriceMinor)}.`
+        : `Bidding is open. The first press bids ${formatMinor(state.nextPriceMinor)}.`;
     case "COUNTDOWN":
       return `Paddle ${state.leaderAlias} leads`;
     case "PAUSED":

@@ -9,7 +9,7 @@ const REFUSAL: Record<string, string> = {
   CLOSED: "The round is closed.",
   NOT_ACTIVE: "Switch this paddle on first.",
   LEADING: "This paddle already leads.",
-  NOT_OPEN: "Bidding opens when two paddles are on.",
+  NOT_OPEN: "Bidding isn't open yet.",
   CEILING: "The ceiling has been reached.",
 };
 

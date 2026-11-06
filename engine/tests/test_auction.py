@@ -17,10 +17,9 @@ def new_auction(**overrides) -> Auction:
 
 def test_walkthrough_from_the_plan():
     a = new_auction()
-    assert a.phase == "LOBBY"
+    assert a.phase == "OPEN"  # the operator opened bidding
+    assert a.bid(50, "TAG1").ack == "IGNORED"  # switched off: a paddle must join first
     a.join(100, "TAG1")
-    assert a.phase == "LOBBY"
-    assert a.bid(150, "TAG1").ack == "IGNORED"  # one paddle: bidding not open
     a.join(200, "TAG2")
     assert a.phase == "OPEN"
 
@@ -62,11 +61,54 @@ def test_leader_switching_off_still_wins():
     assert a.phase == "SOLD_LOCKED" and a.result["winnerAlias"] == "A1"
 
 
-def test_open_falls_back_to_lobby_when_a_paddle_leaves_before_any_bid():
+def test_bidding_stays_open_when_a_paddle_leaves_before_any_bid():
     a = new_auction()
     a.join(0, "TAG1"), a.join(0, "TAG2")
     a.leave(10, "TAG2")
-    assert a.phase == "LOBBY"
+    assert a.phase == "OPEN"
+    assert a.bid(20, "TAG1").ack == "ACCEPTED"
+
+
+def test_lone_bidder_wins_at_their_bid():
+    a = new_auction()
+    a.join(0, "TAG1")
+    out = a.bid(100, "TAG1")
+    assert out.ack == "ACCEPTED" and out.bid["priceMinor"] == 10_000
+    a.tick(5_099)
+    assert a.phase == "COUNTDOWN"
+    out = a.tick(5_100)
+    assert a.phase == "SOLD_LOCKED"
+    assert a.result == {"winnerAlias": "A1", "hammerPriceMinor": 10_000, "finalSeq": 2}
+    assert out.outbox[0][2]["status"] == "SOLD" and out.outbox[0][2]["winnerAlias"] == "A1"
+
+
+def test_no_bid_timer_starts_when_bidding_opens():
+    a = new_auction(time_limit_ms=60_000)  # opened at 0
+    a.join(10_000, "TAG1")  # joining doesn't restart the clock
+    a.tick(59_999)
+    assert a.phase == "OPEN"
+    out = a.tick(60_000)
+    assert a.phase == "UNSOLD"
+    assert out.outbox[0][0] == "AuctionResult" and out.outbox[0][2]["status"] == "UNSOLD"
+    assert a.join(60_001, "TAG2").ack == "CLOSED"
+
+
+def test_paddle_joining_mid_countdown_can_bid_at_once():
+    a = new_auction()
+    a.join(0, "TAG1")
+    a.bid(100, "TAG1")
+    assert a.phase == "COUNTDOWN"
+    a.join(2_000, "TAG2")
+    out = a.bid(2_100, "TAG2")
+    assert out.ack == "ACCEPTED" and out.bid["priceMinor"] == 10_500 and a.leader_alias == "B2"
+
+
+def test_lot_left_in_lobby_by_an_older_engine_opens_on_first_join():
+    a = new_auction()
+    a.phase = "LOBBY"  # as stored by the previous rules
+    a.join(0, "TAG1")
+    assert a.phase == "OPEN"
+    assert a.bid(10, "TAG1").ack == "ACCEPTED"
 
 
 def test_switched_off_paddle_cannot_bid():
@@ -205,7 +247,7 @@ def test_time_limit_excludes_pauses():
     a.join(200_000, "TAG1")
     assert a.resync(200_000).changed
     a.tick(229_999)
-    assert a.phase == "LOBBY"
+    assert a.phase == "OPEN"
     a.tick(230_000)
     assert a.phase == "UNSOLD"
 

@@ -42,13 +42,11 @@ The live room needs the event laptop's engine and Cloudflare tunnel to be online
 
 ## How a round works
 
-1. A seller publishes a lot and the operator freezes its price rules.
-2. Each bidder receives an ESP32 paddle. Switch **ON** joins; switch **OFF** leaves.
-3. Once two paddles are active, pressing **BID** claims the next price. A paddle cannot outbid itself.
-4. Every accepted bid restarts a 10-second hardware-round hammer countdown.
-5. If one paddle loses signal, only that bidder is blocked. Its already accepted bid remains binding. A gateway, bridge or engine outage pauses the entire room.
-6. When the countdown ends, the engine declares the winner and queues the rules, bids and result for Arkiv.
-7. The results page checks the publisher, rules hash, bid count, every price step and the transcript digest in the viewer's browser.
+1. Sellers list items from their own wallets ("Sell an item"), and every lot appears in **Lots** for everyone. The **auctioneer** opens bidding on one lot at a time from the admin page.
+2. Each bidder holds an ESP32 paddle with a **slide switch** and a **BID button**. Switch on to join the room, at any point while bidding is open; switch off to leave. **Each press bids the next price**: +5% per bid, computed with exact integer maths from the opening bid. A lone bidder wins at their bid. If nobody bids before the auctioneer's no-bid timer runs out, the lot closes unsold and goes back to its seller.
+3. Every accepted bid restarts a short hammer countdown ("going once, going twice, sold"). When it ends, the leading paddle wins. Accepted bids stay binding, even if that paddle switches off or loses signal.
+4. If **one paddle** loses signal, only that bidder is blocked (its display shows LOST). Everyone else, and the countdown, carry on. To come back, the paddle re-authenticates and joins again, without restarting the countdown. If the **gateway, bridge or engine** drops out, the whole room **pauses** and nothing is sold until it recovers.
+5. The rules, every accepted bid and the result are written to Arkiv. The [results page](web/src/app/explorer/explorer-view.tsx) re-checks each result in your browser, reading only from Arkiv: issuer wallet, rules hash, bid count, every bid's price, and a hash of the full bid transcript.
 
 ## Architecture
 
