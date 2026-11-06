@@ -135,6 +135,16 @@ With no env, the web app runs a labelled in-browser simulation and bundled sampl
 
 ## Changelog
 
+### 2026-11-06 ~21:15 IST: go-live preparation
+- **Don't start the worker against the engine running since 12:50.**
+  - It runs old code: no V6 rule, no token or transcript changes.
+  - Its only lot, `bid3-room-01`, is UNSOLD with `listingId: "REPLACE_WITH_LISTING_ENTITY_KEY"` (from `firmware/integration/auction-template.json`).
+  - Its outbox holds 3 records, which would be published permanently under the publisher wallet.
+  - Restart on merged `main` with a fresh `DATABASE_PATH`, `SEED_DEMO=0` and `INTENT_SIGNATURES_REQUIRED=1`.
+- **Live lot:** create it from the firmware template (enrolled paddle public keys, 10 s countdown), overriding the IDs to match the `seed-listings` lot (`auctionId: bid3-003`, `listingId: lot-003`). Use `jq`; the template file is left unchanged.
+- **New `bridge/tools/latency.py`:** reads `BID3_LATENCY_JSON` lines (the paddle's own button-to-engine-ack timing) from a paddle's USB serial or a saved log, and prints n, median, p90, min, max and counts by result code. Tested on a sample log.
+- **`arkiv-worker/src/index.ts`:** bid write log lines now add "N ms after the engine accepted it". This gives `why-arkiv.md` its number. Worker typecheck passes.
+
 ### 2026-11-06 ~21:00 IST: README after the firmware merge
 - `firmware` is merged into `main` (PR #1, then `dce4254`). The merge kept `main`'s root README, which dropped the firmware branch's README sections.
 - **Restored in `README.md`:**
