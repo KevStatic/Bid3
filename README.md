@@ -14,8 +14,8 @@ Built at ETHGlobal Mumbai (November 2026).
 
 1. Each bidder holds an ESP32 paddle with a **slide switch** and a **BID button**. Switch on to join the room; switch off to leave.
 2. Once two paddles are on, bidding opens. **Each press bids the next price**: +5% per bid, computed with exact integer maths from the start price.
-3. Every accepted bid restarts a short hammer countdown ("going once, going twice, sold"). When it ends, the leading paddle wins. A leader who switches off still holds their bid.
-4. If a paddle, the bridge or the gateway drops out, the round **pauses**. Nothing is awarded while the room is uncertain.
+3. Every accepted bid restarts a short hammer countdown ("going once, going twice, sold"). When it ends, the leading paddle wins. Accepted bids stay binding, even if that paddle switches off or loses signal.
+4. If **one paddle** loses signal, only that bidder is blocked (its display shows LOST). Everyone else, and the countdown, carry on. To come back, the paddle re-authenticates and joins again, without restarting the countdown. If the **gateway, bridge or engine** drops out, the whole room **pauses** and nothing is sold until it recovers.
 5. The rules, every accepted bid and the result are written to Arkiv. The [results page](web/src/app/explorer/explorer-view.tsx) re-checks each result in your browser, reading only from Arkiv: issuer wallet, rules hash, bid count, every bid's price, and a hash of the full bid transcript.
 
 Payment is simulated (demo credits).
@@ -68,7 +68,7 @@ ESP32 tags ──radio──▶ Gateway ──USB serial──▶ bridge (laptop
 | [`arkiv-worker/`](arkiv-worker/) | Drains the engine's outbox into Arkiv entities with the publisher wallet. |
 | [`web/`](web/) | Next.js app: live room, lots, bid history, results explorer, seller flow, NFC seat page. Reads Arkiv directly in the browser. |
 | [`arkiv/`](arkiv/) | The Arkiv write-ups above. |
-| `firmware` branch | Arduino C++ for the paddles and the gateway. |
+| [`firmware/`](firmware/) | Arduino C++ (V6) for the two paddles (`Tag01/`, `Tag02/`) and the gateway (`Gateway/`), with host checks in `tools/`. See [Hardware and firmware](#hardware-and-firmware). |
 
 Exact pricing, the rules hash and the transcript digest are implemented in TypeScript and in Python. The engine tests check the Python against vectors generated from the TypeScript (`cd engine && python -m pytest`).
 
@@ -92,6 +92,31 @@ cd arkiv-worker && npm install && npm start
 ```
 
 With no environment set, the web app runs a labelled in-browser simulation and bundled sample Arkiv data. Every page shows which source it's using: Live, Simulation, From Arkiv or Sample data.
+
+## Hardware and firmware
+
+Two Seeed XIAO ESP32-C3 paddles and an ESP32-WROOM gateway, running firmware **V6**.
+
+- [Firmware upload guide](firmware/START_HERE.md): wiring, board selection and all three sketches
+- [Firmware overview](firmware/README.md): hardware targets, pinned build commands and source layout
+- [Integration brief](firmware/INTEGRATION_BRIEF.md): gateway → USB bridge → engine
+- [Bidding rules](firmware/BIDDING_RULES.md) and [validation results](firmware/VALIDATION.md)
+
+Build with Espressif ESP32 core **3.3.12**, Arduino CLI **1.5.1**, **115200 baud** on all three boards. Keep the headers beside each sketch, and leave **Erase All Flash disabled** so enrolled identities survive.
+
+The V6 engine policy (one faulty paddle is isolated, not the whole room) lives in `engine/bid3_engine/auction.py`. Deploy the engine from this repo: flashing the firmware alone doesn't update a cloud engine.
+
+**Checks**, from the repository root:
+
+```sh
+python3 -m venv firmware/.venv
+firmware/.venv/bin/python -m pip install -r firmware/requirements-dev.txt
+firmware/.venv/bin/python firmware/tools/check.py
+PYTHONPATH=engine firmware/.venv/bin/python -m pytest engine/tests -q
+node arkiv-worker/scripts/check-schemas.mjs
+```
+
+[GitHub Actions](https://github.com/KevStatic/Bid3/actions/workflows/firmware.yml) runs the firmware host checks, the engine tests and all three board builds. Compiling and host tests don't replace physical RF, timing and hardware checks.
 
 ## What we built at Mumbai, and what we reused
 

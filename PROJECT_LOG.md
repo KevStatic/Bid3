@@ -135,6 +135,20 @@ With no env, the web app runs a labelled in-browser simulation and bundled sampl
 
 ## Changelog
 
+### 2026-11-06 ~21:00 IST: README after the firmware merge
+- `firmware` is merged into `main` (PR #1, then `dce4254`). The merge kept `main`'s root README, which dropped the firmware branch's README sections.
+- **Restored in `README.md`:**
+  - a "Hardware and firmware" section: boards, V6, links to `firmware/START_HERE.md`, `README.md`, `INTEGRATION_BRIEF.md`, `BIDDING_RULES.md` and `VALIDATION.md`
+  - the pinned toolchain and the reminder to deploy the engine from this repo
+  - the verification commands and the CI link
+  - the Architecture table now points at `firmware/` instead of the branch
+- **"How a round works"** now states the V6 rule: one lost paddle is blocked while the others and the countdown continue; gateway, bridge or engine loss pauses the room. Section 1 of this log already said this. No file under `firmware/` was changed.
+- **Merged `main` checked:**
+  - engine `pytest` 45 passed
+  - bridge tests 2 passed (they need `pyserial`, so run them with `bridge/requirements.txt` installed)
+  - `check-schemas` passes; vectors regenerate unchanged; web `tsc` clean
+  - all 40 relative links in the README and `arkiv/*.md` resolve
+
 ### 2026-11-06 ~20:00 IST: firmware confirmed as built at Mumbai
 - **Kev confirmed:** none of the paddle/gateway firmware existed before the event. Earlier wording here called it "pre-existing"; that was wrong. Section 6, item 7 is corrected.
 - **README** "What we built at Mumbai, and what we reused" now says all code was written at Mumbai and lists only public reuse. Taken from the `firmware` branch:
