@@ -4,18 +4,23 @@ import { useId, useMemo, useState } from "react";
 import { LotCard } from "@/components/lot-card";
 import { QueryDisclosure } from "@/components/query-disclosure";
 import { Button, PageHeader, Skeleton, SourceBadge } from "@/components/ui";
-import type { ListingFilter, ListingSort, ListingStatus } from "@/lib/arkiv";
+import type { ListingFilter, ListingSort } from "@/lib/arkiv";
 import { listingQueryText } from "@/lib/arkiv/query-text";
 import { isSampleArkiv } from "@/lib/config";
+import { LOT_STATE_ORDER, useLotStates, type LotState } from "@/lib/lot-state";
 import { useListings } from "@/lib/use-arkiv";
 import { useNow } from "@/lib/use-now";
 
-const STATUSES: { value: ListingStatus | undefined; label: string }[] = [
+/** Status chips filter on where each lot really stands (see lib/lot-state), not on the listing's own status field. */
+type StatusChip = "live" | "upNext" | "closed" | undefined;
+const STATUSES: { value: StatusChip; label: string }[] = [
   { value: undefined, label: "All lots" },
-  { value: "OPEN", label: "Bidding now" },
-  { value: "UPCOMING", label: "Opens soon" },
-  { value: "CLOSED", label: "Closed" },
+  { value: "live", label: "Live now" },
+  { value: "upNext", label: "Up next" },
+  { value: "closed", label: "Sold or unsold" },
 ];
+const matches = (chip: StatusChip, state: LotState | undefined) =>
+  !chip || !state ? !chip : chip === "closed" ? state.kind === "sold" || state.kind === "unsold" || state.kind === "cancelled" : state.kind === chip;
 
 const SORTS: { value: ListingSort; label: string }[] = [
   { value: "closing", label: "Closing soonest" },
@@ -30,7 +35,7 @@ const toMinor = (text: string) => {
 };
 
 export function CatalogueView() {
-  const [status, setStatus] = useState<ListingStatus | undefined>(undefined);
+  const [status, setStatus] = useState<StatusChip>(undefined);
   const [category, setCategory] = useState<string | undefined>(undefined);
   const [minText, setMinText] = useState("");
   const [maxText, setMaxText] = useState("");
@@ -39,13 +44,28 @@ export function CatalogueView() {
   const ids = { min: useId(), max: useId(), sort: useId() };
 
   const filter: ListingFilter = useMemo(
-    () => ({ status, category, minStartMinor: toMinor(minText), maxStartMinor: toMinor(maxText), sort }),
-    [status, category, minText, maxText, sort],
+    () => ({ category, minStartMinor: toMinor(minText), maxStartMinor: toMinor(maxText), sort }),
+    [category, minText, maxText, sort],
   );
 
   const all = useListings({});
   const listings = useListings(filter);
   const categories = useMemo(() => [...new Set((all.data ?? []).map((l) => l.category))].sort(), [all.data]);
+  const { states } = useLotStates(listings.data);
+  // Live lots first, then up next, then closed; the chosen sort holds within each group.
+  const visible = useMemo(
+    () =>
+      listings.data
+        ?.filter((l) => matches(status, states.get(l.auctionId)))
+        .map((l, i) => ({ l, i }))
+        .sort((a, b) => {
+          const sa = states.get(a.l.auctionId);
+          const sb = states.get(b.l.auctionId);
+          return (sa ? LOT_STATE_ORDER[sa.kind] : 9) - (sb ? LOT_STATE_ORDER[sb.kind] : 9) || a.i - b.i;
+        })
+        .map(({ l }) => l),
+    [listings.data, states, status],
+  );
   const filtersActive = status || category || minText || maxText;
 
   const clear = () => {
@@ -59,7 +79,7 @@ export function CatalogueView() {
     <>
       <PageHeader
         title="Lots"
-        lede="Every listing here is an Arkiv entity owned by its seller's wallet. Filters run as Arkiv queries, not against our server."
+        lede="Every listing here is an Arkiv entity owned by its seller's wallet. Category and price filters run as Arkiv queries, not against our server. Whether a lot is live, up next or sold comes from the room and its published result."
         aside={<SourceBadge source={isSampleArkiv ? "sample" : "arkiv"} />}
       />
 
@@ -154,7 +174,7 @@ export function CatalogueView() {
 
       <div className="mt-8 flex items-center justify-between">
         <p className="text-sm text-ink-3" aria-live="polite">
-          {listings.data ? `${listings.data.length} ${listings.data.length === 1 ? "lot" : "lots"}` : "Loading lots…"}
+          {visible ? `${visible.length} ${visible.length === 1 ? "lot" : "lots"}` : "Loading lots…"}
         </p>
         {filtersActive ? (
           <Button variant="quiet" size="sm" onClick={clear}>
@@ -171,7 +191,7 @@ export function CatalogueView() {
             Retry
           </Button>
         </div>
-      ) : listings.data && listings.data.length === 0 ? (
+      ) : visible && visible.length === 0 ? (
         <div className="mt-4 rounded-panel border border-dashed border-line-strong p-10 text-center">
           <p className="text-lg font-semibold">No lots match these filters</p>
           <p className="mt-1 text-ink-2">Widen the price range or pick another category.</p>
@@ -181,10 +201,10 @@ export function CatalogueView() {
         </div>
       ) : (
         <ul className={`mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3 ${listings.isFetching ? "opacity-70" : ""}`}>
-          {listings.data
-            ? listings.data.map((l) => (
+          {visible
+            ? visible.map((l) => (
                 <li key={l.key}>
-                  <LotCard listing={l} nowMs={nowMs} />
+                  <LotCard listing={l} nowMs={nowMs} state={states.get(l.auctionId)} />
                 </li>
               ))
             : Array.from({ length: 6 }, (_, i) => (
