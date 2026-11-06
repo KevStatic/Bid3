@@ -43,13 +43,14 @@ engine/         FastAPI auction engine: single authority for order, price, count
 bridge/         Laptop program: gateway USB serial <-> engine WebSocket (+ fake gateway for tests)
 arkiv-worker/   Drains the engine outbox into Arkiv entities with the publisher wallet
 arkiv/          Arkiv prize write-ups (schema.md done; friction, reach, why-arkiv, how-you-use-arkiv to do)
+firmware/       V2 Arduino tag/gateway sources, wiring/protocol docs and hardware validation (firmware branch)
 PROJECT_LOG.md  This file
 AGENTS.md       Pointer for AI tools: read this log first
 ```
 
 **Branches**
 - `main`: web, engine, bridge, arkiv-worker, arkiv docs, this log.
-- `firmware`: Arduino C++ for the tags and gateway, being reworked. It was branched from `1870e89`, before the backend landed, so it doesn't yet have this log or `bridge/README.md`. Merge `main` into `firmware` so firmware work can see the serial protocol spec and the log.
+- `firmware`: V2 Arduino C++ for the tags and gateway in `firmware/`, imported on top of `e20b253`. Its signed `BID3` serial protocol differs from the current bridge contract. See `firmware/README.md`; coordinated bridge/engine integration remains open.
 
 **Who works where:** each component may be handled by a separate AI chat in the Claude Project "EthGlobal Hackathon" (engine, bridge, arkiv-worker, web, firmware). Every chat reads this log first, works only in its own folder or branch, changes a contract in section 4 only together with the other side, and adds a changelog entry here.
 
@@ -65,6 +66,8 @@ Planning documents (outside the repo): `/Users/kev/Hackathons/EthGlobal/Plans/`.
 | Arkiv entity schemas (5 types) | `web/src/lib/arkiv/schemas.ts` | `arkiv-worker/src/schemas.ts` (identical copy) |
 | Serial protocol (`AUCTION_EVENT_JSON=`, `AUCTION_STATE_JSON=`, `AUCTION_ACK_JSON=`, `CMD=STATUS`) | `bridge/README.md` | gateway firmware |
 | Outbox (`GET /outbox`, `POST /outbox/{id}/published`) | `engine/bid3_engine/api.py` | `arkiv-worker/src/index.ts` |
+
+The serial row above describes the existing bridge. The hardware branch additionally contains the V2 protocol in `firmware/ENGINE_PROTOCOL.md`; it is **not yet wired to that bridge**. V2 uses 460800 baud, signed sessions/intents, explicit engine decisions and a 10-second reference hammer policy. Do not assume compatibility or change one side alone.
 
 Checks that catch drift:
 
@@ -100,7 +103,7 @@ With no env, the web app runs a labelled in-browser simulation and bundled sampl
 
 **Open, roughly in priority order**
 
-1. **Gateway firmware** (branch `firmware`): emit `AUCTION_EVENT_JSON=` for switch ON/OFF (JOIN/LEAVE) and button (BID); answer `CMD=STATUS`. Optionally drive the OLED, LEDs and buzzer from `AUCTION_STATE_JSON=`. Spec in `bridge/README.md`.
+1. **Firmware integration** (branch `firmware`): V2 sources and hardware checks are in `firmware/`. Reconcile `firmware/ENGINE_PROTOCOL.md` with `bridge/README.md` in a coordinated bridge/engine change, including signed sessions, quote versions, decisions, recovery, baud and the 10-second reference policy. The hardware import does not change the existing bridge, engine or web behavior.
 2. **Real-hardware round:** run engine + bridge + web against the real gateway; measure press-to-ack latency and confirm the countdown length.
 3. **Arkiv:**
    - Create and fund the publisher wallet; get an access key.
@@ -127,6 +130,13 @@ With no env, the web app runs a labelled in-browser simulation and bundled sampl
 ---
 
 ## Changelog
+
+### 2026-11-06: import V2 hardware firmware and repeatable validation
+- Added `firmware/` from the matching owner-supplied V2 folder/ZIP: Tag01, Tag02, Gateway, canonical shared headers, wiring/protocol docs, previews, font attribution and host regressions.
+- Cleaned up tag packet initialization and guarded Bluedroid-only notification descriptors; public enrollment pins, NVS identities and wiring are preserved.
+- Added checksum/shared-copy validation, pinned host test dependencies, pinned Arduino CLI/core build checks and a hardware-only GitHub Actions workflow. Generated binaries, archives, environments and caches are ignored.
+- Scope: hardware source/tooling/docs only, plus this hardware status entry. No web, bridge, engine, Arkiv or worker implementation changes.
+- Validation and remaining physical acceptance are recorded in `firmware/VALIDATION.md`. V2 bridge/engine interoperability remains open; the original backend serial contract is unchanged.
 
 ### 2026-11-06 ~10:05 IST: firmware branch and multi-chat setup
 - **New branch:** `firmware` (on origin), for Arduino C++ tag and gateway firmware. No firmware changes pushed yet; the team is reworking the code.

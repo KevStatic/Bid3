@@ -1,0 +1,2 @@
+# Host-side signature verification tests only; no Python runtime on the boards.
+cryptography==49.0.0
