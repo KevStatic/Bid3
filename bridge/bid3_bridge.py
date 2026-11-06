@@ -37,6 +37,7 @@ import sys
 import threading
 import time
 from typing import Any
+from collections import defaultdict, deque
 
 import websockets
 
@@ -62,6 +63,7 @@ class Gateway:
         self._write_lock = threading.Lock()
         self._stop = threading.Event()
         self.connected = False
+        self.last_status_at = 0.0
 
     def start(self) -> None:
         threading.Thread(target=self._run, name="serial-reader", daemon=True).start()
@@ -77,20 +79,31 @@ class Gateway:
 
         while not self._stop.is_set():
             try:
-                self._serial = serial.Serial(self.port_name, self.baud, timeout=0.5)
+                self._serial = serial.Serial(self.port_name, self.baud, timeout=0.05)
                 self.connected = True
+                self.last_status_at = 0.0
                 log.info("gateway connected on %s", self.port_name)
                 self._emit(("gateway", "ok"))
                 buffer = b""
                 while not self._stop.is_set():
-                    chunk = self._serial.read(256)
+                    # Return on the first byte, then drain only bytes already available.
+                    # read(256) waits for its timeout when a short JSON line arrives.
+                    first = self._serial.read(1)
+                    chunk = first + (self._serial.read(self._serial.in_waiting) if first and self._serial.in_waiting else b"")
                     if not chunk:
                         continue
                     buffer += chunk
+                    if len(buffer) > 16384:
+                        raise OSError("gateway serial line exceeds 16 KiB")
                     while b"\n" in buffer:
                         raw, buffer = buffer.split(b"\n", 1)
                         line = raw.decode("utf-8", errors="replace").strip()
                         if line:
+                            if line.startswith("AUCTION_STATUS_JSON="):
+                                with contextlib.suppress(json.JSONDecodeError):
+                                    status = json.loads(line[len("AUCTION_STATUS_JSON="):])
+                                    if isinstance(status, dict) and status.get("build") == "V4_WORKING_BASE" and status.get("running") is True:
+                                        self.last_status_at = time.monotonic()
                             self._emit(("line", line))
             except Exception as exc:  # noqa: BLE001 — unplugged, busy, permissions...
                 if self.connected:
@@ -198,18 +211,43 @@ async def run(engine_url: str, token: str, gateway: Gateway | KeyboardGateway, i
                 attempt = 0
                 log.info("engine connected: %s", engine_url)
                 if gateway_ok:
-                    await ws.send(json.dumps({"type": "health", "gateway": "ok"}))
+                    healthy = not isinstance(gateway, Gateway) or time.monotonic() - gateway.last_status_at < 1.5
+                    await ws.send(json.dumps({"type": "health", "gateway": "ok" if healthy else "down"}))
                 gateway.write_line("CMD=STATUS")
 
+                pending_sessions: dict[tuple[str, int], deque[str]] = defaultdict(deque)
+                last_auction_id: str | None = None
+
+                async def engine_heartbeat() -> None:
+                    while True:
+                        pong = await ws.ping()
+                        await asyncio.wait_for(pong, timeout=2.0)
+                        healthy = gateway.connected and (not isinstance(gateway, Gateway) or time.monotonic() - gateway.last_status_at < 1.5)
+                        await ws.send(json.dumps({"type":"health","gateway":"ok" if healthy else "down"}))
+                        gateway.write_line('AUCTION_BRIDGE_JSON={"engine":"ok"}')
+                        await asyncio.sleep(0.5)
+
                 async def from_engine() -> None:
+                    nonlocal last_auction_id
                     async for raw in ws:
                         message = json.loads(raw)
                         if message.get("type") == "state":
                             message.pop("type", None)
-                            message.pop("auctionId", None)
+                            auction_id = message.pop("auctionId", None)
+                            changed_round = isinstance(auction_id, str) and auction_id != last_auction_id
+                            if changed_round:
+                                last_auction_id = auction_id
                             gateway.write_line(STATE_PREFIX + json.dumps(message, separators=(",", ":")))
+                            if changed_round:
+                                gateway.write_line("CMD=STATUS")
                         elif message.get("type") == "ack":
                             message.pop("type", None)
+                            identity = (str(message.get("tag", "")), message.get("seq"))
+                            sessions = pending_sessions.get(identity)
+                            if sessions:
+                                message["session"] = sessions.popleft()
+                                if not sessions:
+                                    pending_sessions.pop(identity, None)
                             gateway.write_line(ACK_PREFIX + json.dumps(message, separators=(",", ":")))
 
                 async def from_gateway() -> None:
@@ -218,7 +256,8 @@ async def run(engine_url: str, token: str, gateway: Gateway | KeyboardGateway, i
                         kind, value = await inbox.get()
                         if kind == "gateway":
                             gateway_ok = value == "ok"
-                            await ws.send(json.dumps({"type": "health", "gateway": value}))
+                            healthy = value == "ok" and (not isinstance(gateway, Gateway) or time.monotonic() - gateway.last_status_at < 1.5)
+                            await ws.send(json.dumps({"type": "health", "gateway": "ok" if healthy else "down"}))
                             if gateway_ok:
                                 gateway.write_line("CMD=STATUS")
                         elif kind == "line" and value.startswith(EVENT_PREFIX):
@@ -227,21 +266,30 @@ async def run(engine_url: str, token: str, gateway: Gateway | KeyboardGateway, i
                             except json.JSONDecodeError:
                                 log.warning("bad event line from gateway: %s", value[:200])
                                 continue
+                            if event.get("kind") in ("JOIN", "LEAVE", "BID") and isinstance(event.get("seq"), int) and isinstance(event.get("session"), str):
+                                pending_sessions[(str(event.get("tag", "")), event["seq"])].append(event["session"])
                             await ws.send(json.dumps({"type": "intent", "intent": event}))
                         elif kind == "line":
                             log.debug("gateway: %s", value[:200])
 
-                tasks = [asyncio.create_task(from_engine()), asyncio.create_task(from_gateway())]
-                done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-                for task in pending:
-                    task.cancel()
-                for task in done:
-                    task.result()
-        except (OSError, websockets.WebSocketException) as exc:
+                tasks = [asyncio.create_task(from_engine()), asyncio.create_task(from_gateway()), asyncio.create_task(engine_heartbeat())]
+                try:
+                    done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+                    for task in done:
+                        task.result()
+                    raise ConnectionError("engine stream ended")
+                finally:
+                    for task in tasks:
+                        if not task.done():
+                            task.cancel()
+                    await asyncio.gather(*tasks, return_exceptions=True)
+
+        except (OSError, TimeoutError, websockets.WebSocketException) as exc:
             attempt += 1
             delay = min(8.0, 0.5 * 2**attempt)
             log.warning("engine unreachable (%s); retrying in %.1fs", exc, delay)
             # Tell the room display the truth, and refuse presses rather than queueing stale ones.
+            gateway.write_line('AUCTION_BRIDGE_JSON={"engine":"down"}')
             gateway.write_line(STATE_PREFIX + json.dumps({"phase": "PAUSED", "reason": "engine offline"}, separators=(",", ":")))
             deadline = time.monotonic() + delay
             while time.monotonic() < deadline:
@@ -254,7 +302,7 @@ async def run(engine_url: str, token: str, gateway: Gateway | KeyboardGateway, i
                 elif kind == "line" and value.startswith(EVENT_PREFIX):
                     with contextlib.suppress(json.JSONDecodeError):
                         event = json.loads(value[len(EVENT_PREFIX):])
-                        ack = {"tag": event.get("tag"), "seq": event.get("seq"), "kind": event.get("kind"), "result": "CLOSED", "reason": "engine offline"}
+                        ack = {"tag": event.get("tag"), "seq": event.get("seq"), "session": event.get("session"), "kind": event.get("kind"), "result": "CLOSED", "reason": "engine offline"}
                         gateway.write_line(ACK_PREFIX + json.dumps(ack, separators=(",", ":")))
 
 

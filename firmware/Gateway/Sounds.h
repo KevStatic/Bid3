@@ -2,14 +2,20 @@
 #include <stdint.h>
 // Hardware-independent, non-blocking score player. A rest has frequency zero.
 namespace Audio {
-enum Kind : uint8_t { NONE, STARTUP, NEARBY, VERIFIED };
+enum Kind : uint8_t { NONE, STARTUP, NEARBY, VERIFIED, BID_ACCEPTED, BID_REJECTED, SOLD };
 struct Note {uint16_t hz,ms;};
 constexpr Note startup[]={{1568,75},{0,30},{1976,75},{0,30},{2349,110},{0,55},{2093,65},{0,25},{2637,170},{0,45}};
 constexpr Note nearby[]={{1760,55},{0,40},{2093,90},{0,45}};
 constexpr Note verified[]={{2349,45},{0,30},{2637,85},{0,45}};
+constexpr Note bidAccepted[]={{2349,65},{0,10}};
+constexpr Note bidRejected[]={{880,40},{0,40},{880,40},{0,40},{880,40},{0,40}};
+constexpr Note sold[]={{2637,100},{0,60},{2637,100},{0,60},{2637,100},{0,60}};
 struct Score {const Note*notes;uint8_t count;};
 inline Score score(Kind k){
- switch(k){case STARTUP:return {startup,uint8_t(sizeof(startup)/sizeof(Note))};
+ switch(k){case BID_ACCEPTED:return {bidAccepted,uint8_t(sizeof(bidAccepted)/sizeof(Note))};
+ case BID_REJECTED:return {bidRejected,uint8_t(sizeof(bidRejected)/sizeof(Note))};
+ case SOLD:return {sold,uint8_t(sizeof(sold)/sizeof(Note))};
+ case STARTUP:return {startup,uint8_t(sizeof(startup)/sizeof(Note))};
  case NEARBY:return {nearby,uint8_t(sizeof(nearby)/sizeof(Note))};
  case VERIFIED:return {verified,uint8_t(sizeof(verified)/sizeof(Note))};default:return {nullptr,0};}
 }

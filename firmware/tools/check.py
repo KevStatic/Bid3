@@ -60,7 +60,7 @@ def check_integrity():
 
 def run(command):
     print("+ " + shlex.join(map(str, command)), flush=True)
-    subprocess.run(command, cwd=ROOT, check=True)
+    subprocess.run(command, cwd=ROOT, env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"), check=True)
 
 
 def main():
@@ -76,7 +76,6 @@ def main():
         return
 
     check_integrity()
-    run([sys.executable, "-B", "-m", "unittest", "discover", "-s", "tools", "-p", "test_*.py", "-v"])
     compiler = shlex.split(os.environ.get("CXX", "clang++"))
     with tempfile.TemporaryDirectory(prefix="bid3-host-") as directory:
         tests = sorted((ROOT / "tools").glob("test_*.cpp"))
@@ -89,6 +88,12 @@ def main():
                 str(source.relative_to(ROOT)), "-o", str(executable),
             ])
             run([str(executable)])
+            if source.stem == "test_fast_wire":
+                os.environ["BID3_FAST_WIRE_TEST_BIN"] = str(executable)
+        run([sys.executable, "-B", "-m", "unittest", "discover", "-s", "tools", "-p", "test_*.py", "-v"])
+        bridge_tests = ROOT.parent / "bridge" / "tests"
+        if bridge_tests.is_dir():
+            run([sys.executable, "-B", "-m", "unittest", "discover", "-s", str(bridge_tests), "-v"])
     print(f"All Python tests and {len(tests)} C++ host programs passed.")
 
 

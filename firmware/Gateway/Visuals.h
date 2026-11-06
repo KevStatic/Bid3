@@ -81,18 +81,18 @@ inline void drawVisual(Canvas&c,const View&v,uint32_t now,uint32_t sincePower,co
   }
   if(v.sold){c.center(3,"BID3");c.center(17,"SOLD",2);snprintf(b,sizeof(b),"SEAT %u",v.winner);c.center(38,b);
     snprintf(b,sizeof(b),"%llu.%02llu",(unsigned long long)(v.hammerPrice/100),(unsigned long long)(v.hammerPrice%100));c.center(53,b);return;}
-  if(v.event==3&&uint32_t(now-v.eventAt)<2200){
-    c.center(3,"BID ACCEPTED");snprintf(b,sizeof(b),"TAG%02u",v.eventTag);c.center(18,b,2);
+  if((v.event==3||v.event==4||v.event==5)&&uint32_t(now-v.eventAt)<2200){
+    c.center(3,v.event==4?"BID ACCEPTED":v.event==5?"BID REFUSED":"BUTTON VERIFIED");snprintf(b,sizeof(b),"TAG%02u",v.eventTag);c.center(18,b,2);
     if(v.eventTag>=1&&v.eventTag<=2){const auto&q=v.tags[v.eventTag-1];
       snprintf(b,sizeof(b),"EVENT %lu",(unsigned long)q.buttonCount);c.center(41,b);
-      c.center(55,"ENGINE CONFIRMED");}return;
+      c.center(55,v.event==3?"AUTHENTICATED INPUT":v.event==4?"ENGINE CONFIRMED":"NO BID ACCEPTED");}return;
   }
   if(v.event&&v.event!=3&&uint32_t(now-v.eventAt)<1400){
     bool ok=v.event==1;float elapsed=(now-v.eventAt)/1400.f;
     for(int r=0;r<3;++r)c.circle(22,31,4+int(std::fmod(elapsed*28+r*9,28.f)));
     diamond(c,22,31,t*2,12);c.text(51,12,ok?"TAG PROOF":"BID");
     snprintf(b,sizeof(b),"TAG%02u",v.eventTag);c.text(51,26,b,2);
-    c.text(51,46,ok?"VERIFIED":"REJECTED");c.line(50,42,124,42);c.center(57,ok?"ENGINE CONFIRMED":"CHECK SERIAL LOG");return;
+    c.text(51,46,ok?"VERIFIED":"REJECTED");c.line(50,42,124,42);c.center(57,ok?"IDENTITY VERIFIED":"CHECK SERIAL LOG");return;
   }
   uint32_t scene=((sincePower-3800)/6000)%3;
   c.text(1,1,scene==0?"GATEWAY":"BID3 GW");c.text(94,1,"ROOM");c.line(0,10,127,10);

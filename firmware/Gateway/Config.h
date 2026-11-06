@@ -1,7 +1,6 @@
 #pragma once
 namespace Config {
-constexpr unsigned SERIAL_BAUD=460800; // Bridge and gateway Serial Monitor must match.
-constexpr char CHECKPOINT_ID[] = "BID3-ROOM-01";
+constexpr char CHECKPOINT_ID[] = "BOM-DEMO-CHECKPOINT-01";
 constexpr char DISPLAY_LOCATION[] = "BID3";
 constexpr bool DEFAULT_SH1106 = true; // Serial command d toggles and saves driver
 constexpr bool ENABLE_BUZZER = true; // existing 3-pin module; keep the existing 3.3 V wiring
@@ -10,7 +9,7 @@ constexpr bool DEFAULT_ACTIVE_LOW = false; // active modules only; Serial i togg
 constexpr unsigned TAG_RETURN_MS=15000; // arrival sound only after an absence, not every scan
 constexpr unsigned GREEN_DUTY_MAX=38, RED_DUTY_MAX=26; // ~15% / ~10% of 255
 constexpr unsigned DISPLAY_FPS=25, I2C_HZ=400000;
-constexpr unsigned PROOF_INTERVAL_MS=2000, FRESH_MS=1200;
+constexpr unsigned PROOF_INTERVAL_MS=2000, FRESH_MS=25000;
 constexpr unsigned GREEN_PIN=25, RED_PIN=26, BUZZER_PIN=27, SDA_PIN=21, SCL_PIN=22;
 // Trusted PUBLIC keys supplied by the user over USB. No private keys here.
 constexpr const char *DEVICE_HEX[2]={"146393bef0bc","146393bef594"};

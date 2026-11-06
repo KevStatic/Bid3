@@ -1,78 +1,72 @@
-# Bid3 V2 validation — 6 November 2026
+# Bid3 V4 validation — 6 November 2026
 
-Repository import validation was rerun on 6 November 2026 with Arduino CLI 1.5.1, installed Espressif Arduino ESP32 core 3.3.12 and default application partitions. All three sketches compiled with `--warnings all`; the final builds emitted no warnings. No physical tag/gateway was flashed or bench-tested during this import.
+These are checks actually run against this package. No device was flashed, and no physical BLE, button-to-light, acoustic or internet latency measurement was made.
 
-## Repository checks reproduced
+## Target compilation
 
-- All **39 Python tests** passed, including the V2 policy/signature tests and retained legacy enrollment/signature regressions.
-- All **10 C++ host programs** passed with `-Wall -Wextra -Werror`, AddressSanitizer, UndefinedBehaviorSanitizer and sanitizer recovery disabled: **83,111 checks/renderer frames** in total.
-- All **17 shared-header copies** match their canonical sources. `tools/check.py` also verifies the complete firmware checksum manifest, including the build/check tooling and docs.
-- The supplied folder and ZIP matched byte-for-byte before import. Runtime cleanup replaces `memset` on a C++ packet object with value initialization and adds explicit BLE2902 descriptors only for Bluedroid; NimBLE supplies its descriptor automatically. No enrollment key, device ID, NVS namespace or pin assignment was changed.
-- `tools/build.py` enforces the pinned Arduino CLI/core versions and compiles in temporary directories. `.github/workflows/firmware.yml` runs the host checks and a three-target board build with action dependencies pinned to commit SHAs.
-- The existing backend serial contract was inspected and its incompatibility with V2 is documented in [README.md](README.md). Bridge, engine, web and Arkiv implementation files are unchanged.
+Arduino CLI bundled with Arduino IDE, installed Espressif ESP32 core **3.3.12**, default application partition, default board build settings. All three builds exited successfully.
 
-## Final target compilation
-
-| Sketch | Board | Program storage /1,310,720 | Static variables |
+| Sketch | FQBN | Application bytes / limit | Static globals / RAM |
 |---|---|---:|---:|
-| Tag01 |XIAO_ESP32C3 |694,813 bytes (53%) |20,580 bytes |
-| Tag02 |XIAO_ESP32C3 |694,819 bytes (53%) |20,580 bytes |
-| Gateway |ESP32 Dev Module |1,207,674 bytes (92%) |48,044 bytes |
+| Gateway | esp32:esp32:esp32 | 1217394 / 1310720 (92%) | 47100 / 327680 |
+| Tag01 | esp32:esp32:XIAO_ESP32C3 | 713429 / 1310720 (54%) | 19876 / 327680 |
+| Tag02 | esp32:esp32:XIAO_ESP32C3 | 713433 / 1310720 (54%) | 19876 / 327680 |
 
-These figures do not measure runtime heap, task stack margin or sustained two-link radio operation.
+The tag target uses the installed core's bundled NimBLE implementation; the WROOM gateway uses bundled Bluedroid. The additional notification/control characteristics fit the service's handle allocation. The original discovery code, advertisements and original four characteristic UUIDs are retained. Static figures exclude dynamic BLE allocations, mbedTLS allocations and task stacks. Actual heap margin must be observed on the boards.
 
-## Supplied V2 release checks and background
+## Host verification
 
-- All 24 Python policy/signature tests passed, retaining the 10-second hammer, stale simultaneous-bid rejection, binding bids after OFF, replay/idempotency, pricing and invalid-signature coverage.
-- **20,031 discovery/connection/static-LED checks** passed against the actual shared ConnectionPolicy.h with warnings as errors and AddressSanitizer/UndefinedBehaviorSanitizer. They exercise primary manufacturer data without a name, name-only fallback, malformed discovery markers, both tag indexes, connection before ARM/trust provisioning and a static LED independent of auction timing.
-- **2,127 input/wire/feedback checks** passed under the same sanitizers.
-- **9,216 actual radar/startup pixel checks** passed: the radar header/footer contain no BID3 label, BID3 remains under the Ethereum startup mark, and all 64 outer-ring dots survive 100 animated frames. The old footer clear at y=57 was removed because it erased the circle's bottom edge.
-- **68 original audio-player checks** passed. Gateway/Sounds.h is byte-identical to the original user-supplied package, including the startup notes and timing. The restored startup score runs nonblocking and is preempted by auction feedback.
-- **1,164 actual OLED renderer frames** passed sanitizer checks. The final startup/radar/accepted/refused/result contact sheet was rendered and visually inspected.
-- The supplied gateway public key was validated as a secp256k1 point and its SHA256 matched the owner's readout. It is pinned identically in both tag builds. The two original tag public keys/device IDs and tag-number wrappers are preserved.
-- Canonical shared header copies and ZIP hashes were checked during packaging.
+All ten C++ executables compiled with C++17, warnings as errors, AddressSanitizer and UndefinedBehaviorSanitizer. They passed without reported violations:
 
-## Root causes addressed
+- 274 debounce, button tracker and wire checks.
+- 103 inherited tag-wire checks.
+- 50,030 runtime policy checks.
+- 68 original audio sequence checks; the startup melody array is byte-for-byte unchanged.
+- 38 GPIO sound driver checks and 60 OLED power/recovery checks using mocks.
+- 1,164 actual OLED renderer frames, including maximum counters and invalid UI tag indexes.
+- 9,216 radar/startup checks, including all 64 outer-ring dots across 100 sweep frames and startup BID3 placement.
+- 50 fast-frame/canonical-message checks.
+- 1,596 checks of the actual LED/sound envelope policy for accepted, refused and sold signals, including silent gaps.
 
-1. The previous connection task required engine ARM before attempting a BLE link. V2 establishes and identifies both physical BLE links immediately; auction activation remains separately authorized.
-2. Discovery required name and service UUID together. V2 primary advertisements include a compact per-tag marker and the receiver handles name-only/marker-only discovery hints before checking the pinned GATT identity.
-3. The old flow read an optimistic MTU cache immediately after starting an asynchronous negotiation. V2 waits for the actual CFG_MTU event and validates the result.
-4. GATT service handles could remain cached across reconnects in the installed library. V2 explicitly refreshes services after connecting.
-5. The previous instructions incorrectly listed 115200 for gateway public-key enrollment even though the gateway used 460800. V2 documents 460800 for the application gateway and 115200 for tags/the separate readout helper. The app also prints its public key automatically before ARM, and p no longer requires a newline.
-6. Both supplied tag logs showed missing gateway authority. The exact owner-supplied gateway public key is now included in both tag builds, so manual enrollment is unnecessary for that gateway.
+**25 Python tests passed.** These include the original enrolled-proof/signature/replay suites; HKDF/ECDH agreement against standard host implementations; supplied public-key pins; canonical C++ intent text matching the actual engine parser; a synthetic signed bid accepted by the engine signature verifier and rejected after quote mutation; real pyserial reads through an OS pseudo-terminal; exact acknowledgement session echo; simultaneous stale bids; full 10-second timeout; countdown restart; and an intentionally switched-off leader still winning.
 
-## Reproduce checks
+The PTY serial test removes the previous read(256)/500ms batching delay. Its latest run recorded a maximum short-line delivery time of 0.367 ms over 12 host-only samples. **That is not BLE, button, internet or end-to-end bid latency.** It cannot support a claim of zero latency on the real system.
 
-From the `firmware/` directory, the complete repeatable checks are:
+The actual team engine test suite also passed: **31 tests**. Tests used the local repository revision `37b74d52b1907381acb61762af3578fbd6fac8b7`. The matching bridge now lives at ../bridge/bid3_bridge.py; no engine/web runtime code is changed.
+
+## Baseline provenance
+
+The original working archive is identified in legacy_docs/README.md; its unchanged helper hashes are recorded in legacy_docs/BASELINE_SHA256.json. Binary archives are excluded from Git.
+
+SHA256: `b3066a2419b366fd2e4845b853a2d3da60a310938ee3ed96217860ca4e649866`.
+
+The following files were compared byte-for-byte against that ZIP and are unchanged:
+
+- Gateway/Crypto.h
+- Gateway/TagWire.h
+- Gateway/ButtonWire.h
+- Gateway/ButtonSecurity.h
+- Gateway/ButtonTracker.h
+- Gateway/RuntimePolicy.h
+- Gateway/Oled.h
+- Gateway/SoundOutput.h
+- Gateway/VerifierSelfTest.h
+- shared/ButtonInput.h
+
+Both tag folders contain identical shared implementation headers, with the correct distinct tag-number wrappers. The three copies of the common fast wire/crypto/config headers match. The original stored NVS identity namespaces and the supplied public enrollments are retained. Git history records the V2-to-V4 changes; the new Fast*.h files contain the extension.
+
+## Reproduce
+
+Python host prerequisites: cryptography, ecdsa, pyserial, websockets; C++17 compiler. These are test/bridge dependencies, not extra Arduino libraries.
 
 ```sh
-python3 -m venv .venv
-.venv/bin/python -m pip install -r requirements-dev.txt
-.venv/bin/python tools/check.py
-python3 tools/build.py
+python3 tools/check.py
 ```
 
-See README.md for provisioning the pinned Arduino toolchain. The original
-individual V2 test commands are retained below for targeted debugging:
+Engine integration tests additionally need the actual team engine package. They use the sibling engine/ by default, or set BID3_ENGINE_PATH to that directory. A standalone package skips those engine-dependent tests. Full engine checks were run separately with pytest. Renderer previews are under previews/. Raw local build/test logs are excluded from Git.
 
-```sh
-python3 -m unittest discover -s tools -p 'test_bid3*.py' -v
-clang++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined tools/test_bid3_connection.cpp -o /tmp/bid3-connection
-/tmp/bid3-connection
-clang++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined tools/test_bid3_wire.cpp -o /tmp/bid3-wire
-/tmp/bid3-wire
-clang++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined tools/test_bid3_radar.cpp -o /tmp/bid3-radar
-/tmp/bid3-radar
-clang++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined tools/test_audio.cpp -o /tmp/bid3-audio
-/tmp/bid3-audio
-clang++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined tools/test_button_visuals.cpp -o /tmp/bid3-visuals
-/tmp/bid3-visuals
-```
+## Remaining physical validation
 
-Python signature tests require cryptography. Hardware sketches use bundled Arduino libraries.
+Upload all matching sketches and observe both original verified proofs and FAST_READY states. Check both buttons, tag OFF/ON and re-entry, RF loss pause/recovery, gateway/bridge power loss, simultaneous same-quote presses, countdown restart, ten-second sale and OFF leader eligibility. Measure edge_to_tag_ack_ms on the tags and observe the actual LED/buzzer edges. Cold discovery and cryptographic setup remain slower than the established-session path. Compilation, host signatures and simulated GPIO cannot establish RF reliability, timing bounds, battery behavior or acoustic synchronization on the assembled hardware.
 
-## Physical verification remaining
-
-The user's identity readout confirms the gateway key, not successful operation of the newly compiled BLE firmware. Upload matching V2 sketches to all three boards, replacing the temporary identity-readout app on the gateway. Require DISCOVERED and CONNECTED for both tags before testing authenticated engine sessions. If a link is rejected, use the explicit reason rather than erasing flash or generating replacement keys.
-
-Actual RF performance, physical sound/light onset, multi-link heap/stacks, USB reliability and end-to-end engine/Arkiv operation remain hardware/service acceptance work. The code changes and host checks do not justify claiming zero latency or bench-tested success. The team engine still owns bid decisions and the 10-second final result; no fallback fabricated auction was introduced.
+The existing engine v1 intent signature does not bind a round identifier. The integration brief documents its one-active-lot/drain-before-switching constraint; cryptographic cross-round replay protection and parallel-room operation remain outside this release. Backend tokens, deployment, actual listing creation and Arkiv publication are not performed by this firmware task.

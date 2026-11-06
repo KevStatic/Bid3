@@ -1,6 +1,6 @@
 #pragma once
-// Bid3 auction firmware: original identity/NVS and pin wiring retained.
-// New session-bound individual signed intents; legacy snapshot service is superseded.
+// BagTrail button firmware v1: original identity/NVS and legacy proof v1 retained.
+// Added D2/GPIO4 sampled button and separate signed button proof protocol.
 #include <Arduino.h>
 #include <Wire.h>
 #include <Preferences.h>
@@ -66,6 +66,15 @@ ButtonInput::Snapshot buttonSnapshot(){
   portENTER_CRITICAL(&buttonLock);
   auto result=buttonInput.snapshot();
   portEXIT_CRITICAL(&buttonLock);return result;
+}
+void fastSample(const ButtonInput::Snapshot&,bool,uint32_t);
+void buttonTask(void*){
+  for(;;){
+    const bool held=digitalRead(BUTTON)==LOW;const uint32_t now=millis();
+    portENTER_CRITICAL(&buttonLock);buttonInput.sample(held,now);auto b=buttonInput.snapshot();portEXIT_CRITICAL(&buttonLock);
+    fastSample(b,held,now);
+    vTaskDelay(pdMS_TO_TICKS(5));
+  }
 }
 constexpr size_t REQUEST_SIZE = 84, BODY_SIZE = 126, PROOF_SIZE = 190;
 constexpr uint32_t SIGN_INTERVAL_MS = 1500, SESSION_MS = 10000;
@@ -153,7 +162,8 @@ void standby() {
   gpio_hold_en(GPIO_NUM_5); gpio_deep_sleep_hold_en();
   Wire.end(); Serial.flush(); delay(20); esp_deep_sleep_start();
 }
-void checkSwitch() {} // Bid3 OUT keeps the authenticated BLE session alive.
+bool fastIsActive();
+void checkSwitch() { if(!fastIsActive()&&digitalRead(SWITCH)==HIGH&&!switchOnStable()) standby(); }
 bool configureSensor() {
   sample.valid=false; sensorConfigured=false; sensorAddress=0;
   for(uint8_t a : {uint8_t(0x68),uint8_t(0x69)}) {
@@ -249,211 +259,149 @@ void printIdentity() {
   Serial.print("\nPUBLIC_KEY_SHA256=");printHex(fingerprint,32);
   Serial.println("\nSave these PUBLIC enrollment fields for the gateway/backend. Private key is never printed.");
 }
-
 } // namespace BagTrail
-#if defined(CONFIG_BLUEDROID_ENABLED)
-#include <BLE2902.h>
-#endif
-#include <freertos/semphr.h>
-#include "AuctionWire.h"
-#include "AuctionInput.h"
-#include "ConnectionPolicy.h"
-#include "AuthorityConfig.h"
-#include "AuctionCrypto.h"
+#include "FastTag.h"
 namespace BagTrail {
-struct Packet {uint32_t generation=0;uint16_t n=0;uint8_t bytes[Bid3::SIGNED]={0};};
-QueueHandle_t controls=nullptr,intents=nullptr;
-SemaphoreHandle_t notifyLock=nullptr;
-BLECharacteristic *auctionEvents=nullptr;
-mbedtls_ecp_keypair authority;
-std::atomic<bool> sessionReady(false),sessionFault(false),admitted(false);
-portMUX_TYPE contextLock=portMUX_INITIALIZER_UNLOCKED;
-uint8_t context[Bid3::SIGNED]={0},sessionSecret[32]={0};
-uint32_t controlSeq=0,intentSeq=0;std::atomic<uint32_t> heartbeatSeq(0);
-uint32_t armedConnectionEpoch=UINT32_MAX;uint8_t usedSessions[32][16]={0};unsigned usedSessionCount=0;
-std::atomic<uint32_t> controlAt(0),feedbackAt(0);
-std::atomic<uint8_t> feedbackReason(Bid3::INVALID),leader(0),phase(Bid3::PAUSED);
-bool authorityLoaded=false,pending=false;Packet outstanding;
-uint32_t pendingAt=0,lastSend=0;char usbLine[180]={0};size_t usbUsed=0;
-void invalidate(){sessionReady.store(false);admitted.store(false);sessionFault.store(true);}
-bool notifyPacket(const Packet&p){
- if(!connected.load()||!auctionEvents)return false;
- if(xSemaphoreTake(notifyLock,pdMS_TO_TICKS(10))!=pdTRUE)return false;
- auctionEvents->setValue(p.bytes,p.n);auctionEvents->notify();xSemaphoreGive(notifyLock);return true;
+bool fastIsActive(){return fastActive.load();}
+void resultStatus(uint8_t marker,uint8_t code=0) {
+  uint8_t v[2]={marker,code}; responseChar->setValue(v,2);
 }
-void snapshotContext(uint8_t*out){portENTER_CRITICAL(&contextLock);memcpy(out,context,Bid3::SIGNED);portEXIT_CRITICAL(&contextLock);}
-void makeIntent(Packet&p,Bid3::Kind kind,const uint8_t*quote,uint32_t count,uint32_t at){
- p=Packet{};p.n=Bid3::SIGNED;memcpy(p.bytes,quote,Bid3::BODY);
- p.bytes[5]=kind;p.bytes[7]=0;Bid3::put32(p.bytes+110,0);Bid3::put32(p.bytes+122,count);Bid3::put32(p.bytes+126,at);
-}
-void enqueueIntent(Bid3::Kind kind,const uint8_t*quote,uint32_t count,uint32_t at){
- Packet p;makeIntent(p,kind,quote,count,at);
- if(xQueueSend(intents,&p,0)!=pdTRUE)invalidate();
-}
-void inputTask(void*){
- Bid3::ButtonDebounce debounce(digitalRead(BUTTON)==LOW);bool oldSwitch=digitalRead(SWITCH)==LOW;
- bool switchRaw=oldSwitch;uint32_t changed=millis(),switchChanged=changed,count=0,lastBeat=0;
- bool wasReady=false;uint8_t edgeQuote[Bid3::SIGNED]={0};
- for(;;){
-  uint32_t now=millis();bool ready=sessionReady.load()&&!sessionFault.load();
-  bool sw=digitalRead(SWITCH)==LOW;
-  if(sw!=switchRaw){switchRaw=sw;switchChanged=now;}
-  if(ready&&!wasReady){uint8_t q[Bid3::SIGNED];snapshotContext(q);oldSwitch=sw;switchRaw=sw;
-   enqueueIntent(sw?Bid3::JOIN:Bid3::LEAVE,q,count,now);}
-  if(sw!=oldSwitch&&uint32_t(now-switchChanged)>=20){oldSwitch=sw;
-   if(!sw)admitted.store(false);
-   if(ready){uint8_t q[Bid3::SIGNED];snapshotContext(q);enqueueIntent(sw?Bid3::JOIN:Bid3::LEAVE,q,count,now);}}
-  bool down=digitalRead(BUTTON)==LOW;
-  if(down!=debounce.rawLevel()){changed=now;if(down)snapshotContext(edgeQuote);}
-  if(debounce.sample(down,now)){if(count==UINT32_MAX)invalidate();else ++count;
-    if(ready&&oldSwitch&&admitted.load()&&(phase.load()==Bid3::OPEN||phase.load()==Bid3::COUNTDOWN))enqueueIntent(Bid3::BID,edgeQuote,count,changed);
-    else {feedbackReason.store(Bid3::NOT_ACTIVE);feedbackAt.store(now);}
-   }
-  if(ready&&uint32_t(now-lastBeat)>=250){lastBeat=now;Packet beat;beat.n=Bid3::MACED;snapshotContext(beat.bytes);
-   beat.bytes[5]=Bid3::HEARTBEAT;beat.bytes[7]=0;
-   if(heartbeatSeq==UINT32_MAX)invalidate();else{Bid3::put32(beat.bytes+110,++heartbeatSeq);Bid3::put32(beat.bytes+126,now);
-    uint8_t secret[32];portENTER_CRITICAL(&contextLock);memcpy(secret,sessionSecret,32);portEXIT_CRITICAL(&contextLock);
-    if(Bid3Crypto::mac(secret,beat.bytes,"Bid3.Liveness.v1"))notifyPacket(beat);else invalidate();}}
-  if(ready&&uint32_t(now-controlAt.load())>2000)invalidate();
-  wasReady=ready;vTaskDelay(pdMS_TO_TICKS(1));
- }
-}
-class AuctionControl:public BLECharacteristicCallbacks {
- void onWrite(BLECharacteristic*c)override{
-  String value=c->getValue();if(value.length()!=Bid3::SIGNED&&value.length()!=Bid3::MACED)return;
-  Packet p;p.generation=epoch.load();p.n=value.length();memcpy(p.bytes,value.c_str(),p.n);
-  if(!Bid3::header(p.bytes,p.n))return;
-  if(xQueueSend(controls,&p,0)!=pdTRUE)invalidate();
- }
+class ChallengeCallbacks : public BLECharacteristicCallbacks {
+  void onWrite(BLECharacteristic *characteristic) override {
+    String data=characteristic->getValue();
+    if(data.length()!=REQUEST_SIZE) { resultStatus('E',1); return; }
+    if(memcmp(data.c_str(),"BTQ1",4)&&memcmp(data.c_str(),"BTB1",4)) { resultStatus('E',2); return; }
+    if(digitalRead(SWITCH)!=LOW||!connected.load()) { resultStatus('E',6); return; }
+    bool nonzero=false;
+    for(size_t i=52;i<84;++i) nonzero|=uint8_t(data[i])!=0;
+    if(!nonzero) { resultStatus('E',2); return; }
+    Request request; request.epoch=epoch.load(); memcpy(request.bytes,data.c_str(),REQUEST_SIZE);
+    resultStatus('B');
+    if(xQueueSend(requests,&request,0)!=pdTRUE) resultStatus('E',3);
+  }
 };
-class AuctionServer:public BLEServerCallbacks {
- void onConnect(BLEServer*)override{epoch.fetch_add(1);connected.store(true);sessionReady.store(false);sessionFault.store(false);admitted.store(false);}
- void onDisconnect(BLEServer*)override{epoch.fetch_add(1);connected.store(false);invalidate();restartAdvertising.store(true);}
+class ServerCallbacks : public BLEServerCallbacks {
+  void onConnect(BLEServer *) override {
+    epoch.fetch_add(1); connected.store(true); connectedSince.store(millis());
+  }
+  void onDisconnect(BLEServer *) override {
+    epoch.fetch_add(1);connected.store(false);restartAdvertising.store(true);
+  }
 };
-bool loadAuthority(){
- const char*configured=Bid3Config::GATEWAY_PUBLIC_KEY_HEX;
- if(*configured){
-  if(strlen(configured)!=130)return false;uint8_t pub[65];
-  for(int i=0;i<65;++i){char pair[3]={configured[2*i],configured[2*i+1],0};char*end=nullptr;unsigned n=strtoul(pair,&end,16);if(end!=pair+2)return false;pub[i]=n;}
-  return Bid3Crypto::loadPublic(authority,pub);
- }
- Preferences p;if(!p.begin("bid3-authority",true))return false;uint8_t pub[65];
- bool ok=p.getBytesLength("gateway")==65&&p.getBytes("gateway",pub,65)==65;p.end();
- return ok&&Bid3Crypto::loadPublic(authority,pub);
+void publishTelemetry() {
+  uint8_t t[28]={0}; memcpy(t,"BTM1",4);t[4]=TAG;t[5]=flags();
+  u32(t+8,millis());u16(t+12,sampleAge());values(t+14);
+  telemetryChar->setValue(t,sizeof(t));
 }
-void usbCommand(){
- while(Serial.available()){
-  char c=Serial.read();if(c=='\r')continue;
-  if(c!='\n'){if(usbUsed+1<sizeof(usbLine))usbLine[usbUsed++]=c;else usbUsed=0;continue;}
-  usbLine[usbUsed]=0;usbUsed=0;
-  if(!strcmp(usbLine,"p")){printIdentity();continue;}
-  if(!strncmp(usbLine,"GATEWAY_KEY=",12)&&strlen(usbLine+12)==130){
-   if(*Bid3Config::GATEWAY_PUBLIC_KEY_HEX){Serial.println("BUILD_PIN_ACTIVE: this build already pins your gateway. Update AuthorityConfig.h to change it.");continue;}
-   uint8_t pub[65];bool ok=true;
-   for(int i=0;i<65;++i){char pair[3]={usbLine[12+i*2],usbLine[13+i*2],0};char*end=nullptr;
-    unsigned n=strtoul(pair,&end,16);if(end!=pair+2){ok=false;break;}pub[i]=n;}
-   mbedtls_ecp_keypair candidate;mbedtls_ecp_keypair_init(&candidate);ok=ok&&Bid3Crypto::loadPublic(candidate,pub);
-   if(ok){Preferences p;ok=p.begin("bid3-authority",false);if(ok){ok=p.putBytes("gateway",pub,65)==65;p.end();}}
-   mbedtls_ecp_keypair_free(&candidate);
-   Serial.println(ok?"Gateway enrolled over USB. Restart tag to activate.":"Gateway enrollment rejected.");
-  }
- }
+bool startBle() {
+  char name[20];snprintf(name,sizeof(name),"BagTrail-Tag%02u",TAG);
+  BLEDevice::init(name); BLEDevice::setMTU(247);
+  server=BLEDevice::createServer(); if(!server) return false;
+  server->setCallbacks(new ServerCallbacks());
+  BLEService *service=server->createService(SERVICE); if(!service) return false;
+  infoChar=service->createCharacteristic(INFO,BLECharacteristic::PROPERTY_READ);
+  telemetryChar=service->createCharacteristic(TELEMETRY,BLECharacteristic::PROPERTY_READ);
+  BLECharacteristic *challenge=service->createCharacteristic(CHALLENGE,BLECharacteristic::PROPERTY_WRITE);
+  responseChar=service->createCharacteristic(RESPONSE,BLECharacteristic::PROPERTY_READ);
+  if(!infoChar||!telemetryChar||!challenge||!responseChar) return false;
+  if(fastCapable)fastCreate(service);
+  uint8_t info[108];memcpy(info,"BTI1",4);info[4]=TAG;memcpy(info+5,deviceId,6);
+  memcpy(info+11,publicKey,65);memcpy(info+76,fingerprint,32);infoChar->setValue(info,sizeof(info));
+  challenge->setCallbacks(new ChallengeCallbacks());resultStatus('I');publishTelemetry();service->start();
+  advertiser=BLEDevice::getAdvertising();
+  BLEAdvertisementData adv,scan;
+  adv.setFlags(0x06);adv.setCompleteServices(BLEUUID(SERVICE));
+  const uint8_t m[]={0xFF,0xFF,'B','T',1,TAG}; // development manufacturer ID only
+  adv.setManufacturerData(String(reinterpret_cast<const char *>(m),sizeof(m)));
+  scan.setName(name);advertiser->setScanResponse(true);
+  advertiser->setMinInterval(0x0190);advertiser->setMaxInterval(0x01E0); // 250-300 ms
+  if(adv.getPayload().length()>31||scan.getPayload().length()>31) return false;
+  if(!advertiser->setAdvertisementData(adv)||!advertiser->setScanResponseData(scan)) return false;
+  bleStarted=true;checkSwitch();advertised=advertiser->start();
+  Serial.printf("BLE %s | %s | service=%s\n",name,advertised?"START ACCEPTED":"START FAILED",SERVICE);
+  return advertised;
 }
-void processControls(){
- if(!connected.load()){xQueueReset(controls);return;}
- Packet p;for(int i=0;i<8&&xQueueReceive(controls,&p,0)==pdTRUE;++i){
-  uint8_t*b=p.bytes;if(p.generation!=epoch.load()||b[6]!=TAG||memcmp(b+8,deviceId,6)||memcmp(b+14,bootId,8))continue;
-  if(b[5]==Bid3::ARM&&p.n==Bid3::SIGNED){
-   // One ARM per connection. A new epoch requires an explicit disconnect/re-arm.
-   if(!authorityLoaded){Serial.println("BID3_ARM_REJECT=GATEWAY_KEY_NOT_ENROLLED");continue;}
-   if(armedConnectionEpoch==epoch.load()||usedSessionCount==32||sessionReady.load()||!Bid3::u32(b+110))continue;
-   if(!Bid3Crypto::verify(authority,b,"Bid3.Arm.v1")){Serial.println("BID3_ARM_REJECT=GATEWAY_SIGNATURE_MISMATCH");continue;}
-   bool seen=false;for(unsigned j=0;j<usedSessionCount;++j)seen|=!memcmp(usedSessions[j],b+22,16);if(seen)continue;
-   uint8_t secret[32];if(!Bid3Crypto::sessionKey(key,authority,drbg,b,secret))continue;
-   memcpy(usedSessions[usedSessionCount++],b+22,16);armedConnectionEpoch=epoch.load();
-   xQueueReset(intents);pending=false;intentSeq=0;heartbeatSeq=0;controlSeq=Bid3::u32(b+110);
-   portENTER_CRITICAL(&contextLock);memcpy(context,b,Bid3::SIGNED);memcpy(sessionSecret,secret,32);portEXIT_CRITICAL(&contextLock);
-   controlAt.store(millis());sessionFault.store(false);admitted.store(false);leader.store(b[127]);phase.store(b[126]);sessionReady.store(true);
-   Serial.println("BID3_SESSION_READY");continue;
-  }
-  if(!sessionReady.load()||p.n!=Bid3::MACED)continue;
-  uint8_t q[Bid3::SIGNED];snapshotContext(q);
-  if(!Bid3::bound(b,q)||!Bid3::newer(Bid3::u32(b+110),controlSeq)||!Bid3Crypto::checkMac(sessionSecret,b,"Bid3.Control.v1"))continue;
-  if(b[5]!=Bid3::ACK&&b[5]!=Bid3::QUOTE&&b[5]!=Bid3::PAUSE&&b[5]!=Bid3::CLOSE)continue;
-  controlSeq=Bid3::u32(b+110);controlAt.store(millis());leader.store(b[127]);phase.store(b[126]);
-  portENTER_CRITICAL(&contextLock);memcpy(context,b,Bid3::BODY);portEXIT_CRITICAL(&contextLock);
-  if(b[5]==Bid3::ACK&&pending&&Bid3::u32(b+122)==Bid3::u32(outstanding.bytes+110)){
-   if(b[7]==Bid3::ACCEPTED){
-    if(outstanding.bytes[5]==Bid3::JOIN)admitted.store(digitalRead(SWITCH)==LOW);
-    if(outstanding.bytes[5]==Bid3::LEAVE)admitted.store(false);
-   }
-   feedbackReason.store(b[7]);feedbackAt.store(millis());pending=false;
-  }
-  if(b[5]==Bid3::CLOSE){admitted.store(false);}
- }
+void processRequest() {
+  Request r;
+  if(xQueueReceive(requests,&r,0)!=pdTRUE) return;
+  if(r.epoch!=epoch.load()||!connected.load()) return;
+  checkSwitch();
+  if(signedBefore&&millis()-lastSign<SIGN_INTERVAL_MS) { resultStatus('E',4);return; }
+  if(havePreviousNonce&&!memcmp(previousNonce,r.bytes+52,32)) { resultStatus('E',7);return; }
+  if(sequence==UINT32_MAX) { resultStatus('E',5);fatal=true;return; }
+  const bool buttonMode=!memcmp(r.bytes,"BTB1",4);
+  const auto button=buttonSnapshot();
+  if(buttonMode&&button.overflow){resultStatus('E',8);return;}
+  const size_t bodySize=buttonMode?BUTTON_BODY_SIZE:BODY_SIZE;
+  const size_t proofSize=buttonMode?BUTTON_PROOF_SIZE:PROOF_SIZE;
+  const char*domain=buttonMode?BUTTON_DOMAIN:DOMAIN;
+  uint8_t proof[BUTTON_PROOF_SIZE]={0};memcpy(proof,buttonMode?"BTP1":"BTAG",4);proof[4]=1;proof[5]=TAG;proof[6]=flags();
+  memcpy(proof+8,deviceId,6);memcpy(proof+14,bootId,8);u32(proof+22,++sequence);
+  u32(proof+26,millis());u16(proof+30,sampleAge());values(proof+32);
+  memcpy(proof+46,r.bytes+4,16);memcpy(proof+62,r.bytes+20,32);memcpy(proof+94,r.bytes+52,32);
+  if(buttonMode){u32(proof+126,button.count);u32(proof+130,button.lastPressAt);proof[134]=button.pressed?1:0;}
+  uint8_t message[sizeof(BUTTON_DOMAIN)-1+BUTTON_BODY_SIZE],hash[32];
+  const size_t domainSize=strlen(domain),messageSize=domainSize+bodySize;
+  memcpy(message,domain,domainSize);memcpy(message+domainSize,proof,bodySize);
+  signedBefore=true;lastSign=millis(); // also rate-limit failing crypto attempts
+  const bool ok=!mbedtls_sha256(message,messageSize,hash,0)&&signDigest(hash,proof+bodySize);
+  checkSwitch();
+  if(r.epoch!=epoch.load()||!connected.load()) return;
+  if(!ok) { resultStatus('E',5);Serial.println("ERROR: tag proof signing/self-verification failed.");return; }
+  memcpy(previousNonce,r.bytes+52,32);havePreviousNonce=true;
+  responseChar->setValue(proof,proofSize);
+  if(buttonMode)fastPrepare(proof);
+  Serial.printf("SIGNED_PROOF tag=%u seq=%lu motion_valid=%u moving=%u button_proof=%u\n",TAG,
+      (unsigned long)sequence,bool(proof[6]&1),bool(proof[6]&2),buttonMode);
+  if(buttonMode)Serial.printf("SIGNED_BUTTON tag=%u count=%lu held=%u\n",TAG,(unsigned long)button.count,button.pressed);
 }
-void setupTag(){
- gpio_deep_sleep_hold_dis();gpio_hold_dis(GPIO_NUM_5);
- pinMode(LED,OUTPUT);digitalWrite(LED,LOW);pinMode(SWITCH,INPUT_PULLUP);pinMode(BUTTON,INPUT_PULLUP);
- Serial.begin(115200);Wire.begin(SDA,SCL,100000);Wire.setTimeOut(5);
- ledPwmReady=ledcAttach(LED,LED_PWM_HZ,8);indicator(Bid3::tagLed(digitalRead(SWITCH)==LOW));mbedtls_ecp_keypair_init(&authority);
- if(!ledPwmReady||esp_read_mac(deviceId,ESP_MAC_WIFI_STA)!=ESP_OK||!initializeIdentity()){fatal=true;Serial.println("BID3_FATAL=tag_identity_or_LED_initialization");return;}
- authorityLoaded=loadAuthority();printIdentity();indicator(Bid3::tagLed(digitalRead(SWITCH)==LOW));
- Serial.println("Bid3 tag V2: static LED; D2=GPIO4 BID, D1=GPIO3 JOIN/LEAVE. No flash erase.");
- if(!authorityLoaded)Serial.println("Enroll trusted gateway over USB: GATEWAY_KEY=<130 hex chars>, then reset.");
- controls=xQueueCreate(12,sizeof(Packet));intents=xQueueCreate(8,sizeof(Packet));notifyLock=xSemaphoreCreateMutex();
- if(!controls||!intents||!notifyLock){fatal=true;Serial.println("BID3_FATAL=tag_queue_allocation");return;}
- char name[20];snprintf(name,sizeof(name),"Bid3-Tag%02u",TAG);BLEDevice::init(name);BLEDevice::setMTU(247);
- server=BLEDevice::createServer();server->setCallbacks(new AuctionServer());
- auto*service=server->createService(BLEUUID(Bid3::SERVICE),24);
- auto*info=service->createCharacteristic(Bid3::INFO,BLECharacteristic::PROPERTY_READ);
- auto*control=service->createCharacteristic(Bid3::CONTROL,BLECharacteristic::PROPERTY_WRITE);
- auctionEvents=service->createCharacteristic(Bid3::EVENTS,BLECharacteristic::PROPERTY_NOTIFY);
-#if defined(CONFIG_BLUEDROID_ENABLED)
- // NimBLE creates the notification descriptor automatically.
- auctionEvents->addDescriptor(new BLE2902());
-#endif
- control->setCallbacks(new AuctionControl());
- uint8_t data[116]={0};memcpy(data,"B3I1",4);data[4]=TAG;memcpy(data+5,deviceId,6);memcpy(data+11,publicKey,65);memcpy(data+76,bootId,8);
- if(authorityLoaded){uint8_t authorityPublic[65];size_t length=0;
-  if(!mbedtls_ecp_point_write_binary(&authority.MBEDTLS_PRIVATE(grp),&authority.MBEDTLS_PRIVATE(Q),MBEDTLS_ECP_PF_UNCOMPRESSED,&length,authorityPublic,sizeof(authorityPublic))&&length==65)
-   mbedtls_sha256(authorityPublic,65,data+84,0);
- }
- info->setValue(data,sizeof(data));
- service->start();advertiser=BLEDevice::getAdvertising();
- BLEAdvertisementData adv,scan;adv.setFlags(0x06);adv.setCompleteServices(BLEUUID(Bid3::SERVICE));
- const uint8_t marker[]={0xff,0xff,'B','3',2,TAG};
- adv.setManufacturerData(String(reinterpret_cast<const char*>(marker),sizeof(marker)));scan.setName(name);
- if(adv.getPayload().length()>31||scan.getPayload().length()>31||!advertiser->setAdvertisementData(adv)||!advertiser->setScanResponseData(scan)){
-  fatal=true;Serial.println("BID3_ADVERTISING_ERROR=payload_configuration");return;
- }
- advertiser->setMinInterval(0x30);advertiser->setMaxInterval(0x50);advertiser->setScanResponse(true);
- advertised=advertiser->start();bleStarted=true;lastAdvertise=millis();
- Serial.printf("BID3_V2_ADVERTISING tag=%u accepted=%u bytes=%u authority=%s\n",TAG,advertised,unsigned(adv.getPayload().length()),authorityLoaded?"PINNED":"NEEDS_GATEWAY_KEY");
- if(xTaskCreate(inputTask,"bid3-input",4096,nullptr,2,nullptr)!=pdPASS){fatal=true;invalidate();}
-}
-void loopTag(){
- indicator(Bid3::tagLed(digitalRead(SWITCH)==LOW));usbCommand();if(fatal){delay(10);return;}processControls();uint32_t now=millis();
- static bool linkReported=false;
- bool linkNow=connected.load();if(linkNow!=linkReported){linkReported=linkNow;Serial.println(linkNow?"BID3_BLE=CONNECTED; waiting for authenticated engine session":"BID3_BLE=DISCONNECTED");}
- if(restartAdvertising.exchange(false)){pending=false;xQueueReset(intents);advertised=false;lastAdvertise=0;Serial.println("BID3_BLE=DISCONNECTED; restarting advertising");}
- if(bleStarted&&!connected.load()&&!advertised&&uint32_t(now-lastAdvertise)>=1000){lastAdvertise=now;advertised=advertiser->start();}
- if(!fatal&&sessionReady.load()&&!sessionFault.load()){
-  if(!pending&&xQueueReceive(intents,&outstanding,0)==pdTRUE){
-   if(intentSeq==UINT32_MAX){invalidate();return;}
-   Bid3::put32(outstanding.bytes+110,++intentSeq);uint32_t began=micros();
-   if(!Bid3Crypto::sign(key,drbg,outstanding.bytes,"Bid3.Intent.v1")){invalidate();return;}
-   uint32_t signUs=micros()-began;
-   pending=true;pendingAt=millis();lastSend=pendingAt;notifyPacket(outstanding);
-   Serial.printf("BID3_SIGN_US=%lu\n",(unsigned long)signUs);
+void setupTag() {
+  gpio_deep_sleep_hold_dis();gpio_hold_dis(GPIO_NUM_5);
+  digitalWrite(LED,LOW);pinMode(LED,OUTPUT);pinMode(SWITCH,INPUT_PULLUP);pinMode(BUTTON,INPUT_PULLUP);
+  Serial.begin(115200);Wire.begin(SDA,SCL,100000);Wire.setTimeOut(20);delay(20);
+  if(!switchOnStable()) standby();
+  ledPwmReady=ledcAttach(LED,LED_PWM_HZ,8);
+  if(ledPwmReady) ledcWrite(LED,LED_DUTY);
+  else {fatal=true;Serial.println("FATAL: LED PWM setup failed; indicator remains OFF.");return;}
+  uint32_t start=millis();while(!Serial&&millis()-start<1500) {checkSwitch();delay(5);}
+  Serial.printf("\nBid3 TAG%02u / V4 WORKING_BASE / D2=GPIO4 to GND / static dim LED / 115200 baud\n",TAG);
+  Serial.println("D2 uses INPUT_PULLUP: released=HIGH, pressed=LOW; 30 ms debounce; one count per press.");
+  if(xTaskCreate(buttonTask,"button-input",4096,nullptr,2,nullptr)!=pdPASS){
+    fatal=true;Serial.println("FATAL: button sampler task creation failed. BLE not started.");return;
   }
-  now=millis();
-  if(pending&&uint32_t(now-lastSend)>=200){lastSend=now;notifyPacket(outstanding);}
-  if(pending&&uint32_t(now-pendingAt)>2000)invalidate();
- }
- // User-requested static status LED: switch ON only, independent of bid,
- // leader, fault, engine phase and timing. It is not an admission indicator.
- bool light=Bid3::tagLed(digitalRead(SWITCH)==LOW);
- indicator(light);delay(1);
+  Serial.printf("External green PWM duty: %u/255 (~15%%), 5 kHz.\n",LED_DUTY);
+  requests=xQueueCreate(1,sizeof(Request));
+  if(!requests||esp_read_mac(deviceId,ESP_MAC_WIFI_STA)!=ESP_OK||!initializeIdentity()) {
+    fatal=true;Serial.println("FATAL: identity storage/crypto initialization failed. BLE not started.");return;
+  }
+  printIdentity();fastInit();checkSwitch();configureSensor();if(sensorConfigured) readMotion();checkSwitch();
+  if(!startBle()) {fatal=true;Serial.println("FATAL: BLE setup failed. Move OFF/ON to retry.");}
+}
+void loopTag() {
+  checkSwitch();uint32_t now=millis();
+  if(fatal) {indicator(digitalRead(SWITCH)==LOW);delay(5);return;}
+  static uint32_t reportedCount=0;static bool reportedHeld=false,reportedOverflow=false;
+  const auto button=buttonSnapshot();
+  if(button.count!=reportedCount||button.pressed!=reportedHeld||button.overflow!=reportedOverflow){
+    reportedCount=button.count;reportedHeld=button.pressed;reportedOverflow=button.overflow;
+    Serial.printf("BUTTON_LOCAL tag=%u count=%lu held=%u overflow=%u\n",TAG,(unsigned long)button.count,button.pressed,button.overflow);
+  }
+  if(now-lastSample>=20) {lastSample=now;if(sensorConfigured) readMotion();}
+  if(!sensorConfigured&&now-lastRetry>=5000) {lastRetry=now;configureSensor();}
+  if(restartAdvertising.exchange(false)) {advertised=false;lastAdvertise=0;}
+  if(!connected.load()&&!advertised&&now-lastAdvertise>=1000) {
+    lastAdvertise=now;advertised=advertiser->start();
+  }
+  if(connected.load()&&!fastActive.load()&&now-connectedSince.load()>SESSION_MS) server->disconnect(server->getConnId());
+  processRequest();fastTick();
+  if(now-lastTelemetry>=200) {lastTelemetry=now;publishTelemetry();}
+  indicator(digitalRead(SWITCH)==LOW);
+  if(now-lastLog>=2000) {
+    lastLog=now;Serial.printf("TAG%02u %s | BLE=%s | sensor=%s | moving=%u | accel_mg=%d,%d,%d | seq=%lu\n",
+      TAG,digitalRead(SWITCH)==LOW?"ON":"OFF",connected.load()?"CONNECTED":advertised?"ADVERTISING":"RETRY",
+      flags()&1?"VALID":"INVALID",bool(flags()&2),sample.ax,sample.ay,sample.az,(unsigned long)sequence);
+  }
+  while(Serial.available()) {char cmd=Serial.read();if(cmd=='p'||cmd=='P') printIdentity();}
+  delay(2);
 }
 } // namespace BagTrail

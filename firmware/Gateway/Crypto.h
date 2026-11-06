@@ -65,7 +65,7 @@ bool init(){
  if(mbedtls_ctr_drbg_random(&rng,boot,8)||!hash((const uint8_t*)Config::CHECKPOINT_ID,strlen(Config::CHECKPOINT_ID),checkpoint))return false;
  uint8_t digest[32],sig[64];hash((const uint8_t*)SCAN_DOMAIN,strlen(SCAN_DOMAIN),digest);return sign(digest,sig);
 }
-void printPublic(){Serial.println("GATEWAY_UUID_HEX="+hex(gateway,16));Serial.println("GATEWAY_PUBLIC_KEY_SECP256K1="+hex(publicKey,65));Serial.println("GATEWAY_PUBLIC_KEY_SHA256="+hex(fingerprint,32));Serial.printf("CHECKPOINT_ID=%s (configured room binding)\n",Config::CHECKPOINT_ID);}
+void printPublic(){Serial.println("GATEWAY_UUID_HEX="+hex(gateway,16));Serial.println("GATEWAY_PUBLIC_KEY_SECP256K1="+hex(publicKey,65));Serial.println("GATEWAY_PUBLIC_KEY_SHA256="+hex(fingerprint,32));Serial.printf("CHECKPOINT_ID=%s (configured demo checkpoint)\n",Config::CHECKPOINT_ID);}
 bool makeChallenge(uint8_t r[84]){memcpy(r,"BTQ1",4);memcpy(r+4,gateway,16);memcpy(r+20,checkpoint,32);return mbedtls_ctr_drbg_random(&rng,r+52,32)==0;}
 bool infoMatches(const uint8_t*p,size_t n,int tag){return tag>=0&&tag<2&&n==108&&!memcmp(p,"BTI1",4)&&p[4]==tag+1&&!memcmp(p+5,tags[tag].device,6)&&!memcmp(p+11,tags[tag].pub,65)&&!memcmp(p+76,tags[tag].finger,32);}
 bool verifyAgainst(const uint8_t*p,size_t n,int tag,Enrollment&enrolled,const uint8_t request[84],bool&pending,uint32_t age,uint8_t digest[32]){

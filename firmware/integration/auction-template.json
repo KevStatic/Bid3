@@ -1,0 +1,25 @@
+{
+  "auctionId": "bid3-room-01",
+  "listingId": "REPLACE_WITH_LISTING_ENTITY_KEY",
+  "category": "Electronics",
+  "rules": {
+    "startPriceMinor": 10000,
+    "stepBps": 500,
+    "countdownMs": 10000,
+    "ceilingMinor": 100000,
+    "timeLimitMs": 600000,
+    "unit": "credits"
+  },
+  "seats": [
+    {
+      "tagRef": "TAG1",
+      "alias": "K7",
+      "publicKey": "0471f77bfab9e161869957f4e734197acd9977e3f8bef5e81e3b53b731a3a872298144ebdf6fc36f55eb74558a1877f5f4c907193f49b713fe2ffcc2a3046d7dea"
+    },
+    {
+      "tagRef": "TAG2",
+      "alias": "M4",
+      "publicKey": "04e4c3d6dbb3817ab725ad3397cbffee5b91206830fb1eefcd67c2436fdf8ee08d73c78f5e1ee6f407dcae6dcb4b480491e791496577b69a14e8dba9fbc0486538"
+    }
+  ]
+}

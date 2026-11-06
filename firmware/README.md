@@ -1,102 +1,46 @@
-# Bid3 hardware firmware
+# Bid3 hardware firmware — V4
 
-V2 source for two Seeed XIAO ESP32-C3 bidder tags and an ESP32-WROOM gateway.
-Imported from `Bid3_Firmware_V2_2026-11-06.zip` on 6 November 2026. Runtime
-behavior, public identity pins, wiring and NVS namespaces are preserved. Tag
-packet initialization uses C++ value initialization, and explicit notification
-descriptors are added only for Bluedroid; NimBLE creates its descriptor itself.
-
-## Hardware targets
+Uploadable Arduino sources for two Seeed XIAO ESP32-C3 bidder tags and an ESP32-WROOM gateway. V4 reuses the original owner-tested BLE advertisements, discovery and enrolled signed button proofs, then adds authenticated persistent notifications for individual auction intents. The matching USB bridge is maintained once, in [../bridge/bid3_bridge.py](../bridge/bid3_bridge.py).
 
 | Device | Sketch | Arduino FQBN | Serial baud |
-| --- | --- | --- | ---: |
-| Physical tag 01 | `Tag01/Tag01.ino` | `esp32:esp32:XIAO_ESP32C3` | 115200 |
-| Physical tag 02 | `Tag02/Tag02.ino` | `esp32:esp32:XIAO_ESP32C3` | 115200 |
-| Gateway | `Gateway/Gateway.ino` | `esp32:esp32:esp32` | 460800 |
+|---|---|---|---:|
+| Physical Tag 1 | [Tag01/Tag01.ino](Tag01/Tag01.ino) | esp32:esp32:XIAO_ESP32C3 | 115200 |
+| Physical Tag 2 | [Tag02/Tag02.ino](Tag02/Tag02.ino) | esp32:esp32:XIAO_ESP32C3 | 115200 |
+| Gateway | [Gateway/Gateway.ino](Gateway/Gateway.ino) | esp32:esp32:esp32 | 115200 |
 
-Use **Arduino CLI 1.5.1**, **Espressif ESP32 core 3.3.12** and the default
-application partition. BLE, FreeRTOS, Preferences and mbedTLS come with that
-core. Keep the headers beside each `.ino` when opening it in Arduino IDE.
-Upload each tag sketch only to its matching physical tag. Preserve NVS; do
-not erase all flash during a normal update.
+Use **Espressif ESP32 core 3.3.12** and **Arduino CLI 1.5.1** for repeatable builds. Built-in BLE, mbedTLS, Wire, Preferences and FreeRTOS are sufficient. Keep all headers beside each .ino. Preserve enrolled NVS identities: **Erase All Flash Before Sketch Upload = Disabled**. The supplied public enrollment values match the owner's actual devices; no device private keys are checked in.
 
-`shared/` contains canonical tag/common headers. The matching files beside
-the sketches allow standalone Arduino IDE uploads. Change the canonical
-file and synchronize its copies together; the validation command detects drift.
+## Upload and operate
 
-## Wiring and operation
+Read [START_HERE.md](START_HERE.md) for wiring, upload steps and automatic diagnostics. Radio discovery needs no ESP RESET/BOOT button, USB arm command or GPIO33. Original authentication precedes FAST_READY. An offline verified button diagnostic is distinct from an engine-accepted bid.
 
-Read [START_HERE.md](START_HERE.md) for wiring, identity pinning, upload steps
-and expected serial diagnostics. The tag LED follows its slide switch; gateway
-lights and sound provide auction feedback. Both BLE links connect before an
-engine session is armed. Private identities remain on the devices in NVS;
-the checked-in enrollment values are public keys and fingerprints.
+Tag LEDs remain static dim green while switched ON. Gateway outcome LEDs follow the same envelope as the buzzer. The original startup melody is retained; BID3 is below the spinning Ethereum mark on startup. The radar page has no BID3 footer and retains its complete dotted ring. Established sessions avoid per-press reconnect/proof polling. Cold discovery and end-to-end latency are not zero or hardware-verified here.
 
-## Build and validate
+[INTEGRATION_BRIEF.md](INTEGRATION_BRIEF.md) connects the canonical bridge to the existing engine. Use enrolled seat public keys, INTENT_SIGNATURES_REQUIRED=1 and **countdownMs=10000** on each new auction. [integration/auction-template.json](integration/auction-template.json) contains the actual public keys and 10-second rules. Existing frozen rules are not silently rewritten.
 
-Run from this directory with Python 3.10 or newer and Clang installed:
+The engine serializes same-quote presses: first valid bid accepted, the other STALE. Accepted bids restart the timer; the accepted leader can win after intentionally switching OFF. Link/infrastructure loss pauses bidding. Arkiv remains outside the live bid loop. See [BIDDING_RULES.md](BIDDING_RULES.md) and [FAST_PROTOCOL.md](FAST_PROTOCOL.md).
+
+**Engine v1 constraint:** signatures bind a tag's session, sequence and quote version, but not auctionId/epoch. Operate one active lot and drain outstanding work before switching lots. This update does not claim cross-round replay protection, parallel-room routing or payment settlement.
+
+## Validate and build
+
+From firmware/ with Python 3.10+ and Clang installed:
 
 ```sh
 python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements-dev.txt
 .venv/bin/python tools/check.py
+PYTHONPATH=../engine .venv/bin/python -m pytest ../engine/tests -q
+python3 tools/build.py --arduino-cli /absolute/path/to/arduino-cli
 ```
 
-The check verifies every release checksum, all shared-header copies, all Python
-signature/policy tests and all ten C++ regression programs with warnings as
-errors, AddressSanitizer and UndefinedBehaviorSanitizer. Build products use
-temporary directories; environments and caches are ignored by Git.
-
-With Arduino CLI 1.5.1 installed, provision the pinned board package once:
+Install the pinned ESP32 core before compiling:
 
 ```sh
 arduino-cli core update-index --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
 arduino-cli core install esp32:esp32@3.3.12 --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
-python3 tools/build.py
 ```
 
-Pass `--arduino-cli /absolute/path/to/arduino-cli` for a CLI bundled with Arduino
-IDE, or `--sketch Gateway` to compile one target. These commands compile only;
-select the correct device and port in Arduino IDE to upload. The repository's
-`Firmware` workflow runs the same checks and compiles all three targets on
-hardware changes. See [VALIDATION.md](VALIDATION.md) for validation evidence
-and the physical acceptance work still needed.
+The checksum check also validates canonical shared-header copies. It runs ten C++ programs with sanitizers, firmware Python checks against the real engine canonical message/state machine, and the bridge's PTY/ACK tests. Temporary executables remain outside the source tree. After intentional source changes regenerate SHA256SUMS.json with `python tools/check.py --update-checksums`, then rerun checks. CI runs the same checks, engine tests and all three board builds.
 
-After reviewing intentional changes, update the manifest and rerun checks:
-
-```sh
-python3 tools/check.py --update-checksums
-python3 tools/check.py
-```
-
-## Backend integration status
-
-**This V2 firmware does not yet interoperate with the repository's existing
-`bridge/bid3_bridge.py`.** BLE discovery and connection can be tested independently.
-
-| Contract | V2 firmware | Existing bridge/engine |
-| --- | --- | --- |
-| USB transport | 460800 baud | 115200 default |
-| Events | `BID3_EVENT_JSON`, signed intents and sessions | `AUCTION_EVENT_JSON` |
-| Control | `BID3 ARM/STATE/DECIDE/RESULT`, periodic `PING` | `AUCTION_STATE_JSON`, `AUCTION_ACK_JSON`, `CMD=STATUS` |
-| Quote freshness | Round-bound `quoteVersion` | `stateVersion` |
-| Hammer policy | 10000 ms reference policy | 5000 ms engine default |
-
-The existing bridge ignores V2 event prefixes. Changing baud alone is
-insufficient. A coordinated bridge/engine update must implement the V2
-[ENGINE_PROTOCOL.md](ENGINE_PROTOCOL.md), bind and verify sessions/intents,
-map authoritative decisions, align the countdown/rules hash and recover paused
-after faults. That integration is outside this hardware import. The engine
-remains the sole authority for acceptance, countdown and result persistence;
-the gateway never creates a winner when the backend is absent.
-
-The Python rules module is a host reference for firmware integration tests,
-not a deployed replacement for the engine. See [RULES.md](RULES.md) and
-[LATENCY_AND_SYNC.md](LATENCY_AND_SYNC.md) for the V2 policy and measurement
-procedure. `legacy_docs/` and legacy protocol tests are retained for identity
-and regression history; they do not define the active V2 transport.
-
-No devices have been flashed or bench-tested as part of this repository import.
-RF reliability, heap/stack margins, sound/light timing and a real auction round
-remain hardware acceptance work. The font attribution is in
-[FONT_LICENSE.txt](FONT_LICENSE.txt); the repository license also applies.
+[VALIDATION.md](VALIDATION.md) records the delivered code's target builds and host verification. Real RF, acoustic/LED timing, heap margin and a complete assembled-hardware round remain bench acceptance work. [previews/gateway-screens.png](previews/gateway-screens.png) is rendered from the actual OLED drawing code. [legacy_docs/](legacy_docs/) records the working baseline's provenance; V2 remains in Git history. Archives, build products and raw local logs are excluded from Git. Font attribution is in [FONT_LICENSE.txt](FONT_LICENSE.txt).
