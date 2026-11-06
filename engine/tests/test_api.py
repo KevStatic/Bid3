@@ -75,8 +75,11 @@ def test_health_and_seeded_auction(client):
     health = client.get("/health").json()
     assert health["activeAuctionId"] == "bid3-003" and health["bridgeConnected"] is False
     state = client.get("/auctions/bid3-003").json()["state"]
-    assert state["phase"] == "LOBBY"
+    assert state["phase"] == "OPEN"
     assert [p["alias"] for p in state["paddles"]] == ["K7", "M4"]
+    # The public lot list the web's Lots page reads: phase, price and leader for every lot.
+    [listed] = client.get("/auctions").json()
+    assert listed["auctionId"] == "bid3-003" and listed["phase"] == "OPEN" and listed["leaderAlias"] is None
 
 
 def test_bridge_requires_token(client):
@@ -191,7 +194,7 @@ def test_operator_can_create_and_open_an_auction(client):
     assert client.post("/auctions", json=body, headers=ADMIN).status_code == 201
     assert client.post("/auctions", json=body, headers=ADMIN).status_code == 400  # duplicate
     opened = client.post("/auctions/bid3-010/open", headers=ADMIN).json()["state"]
-    assert opened["phase"] == "LOBBY"
+    assert opened["phase"] == "OPEN"
     assert client.get("/health").json()["activeAuctionId"] == "bid3-010"
     journal = client.get("/auctions/bid3-010/journal", headers=ADMIN).json()
     assert {e["kind"] for e in journal} >= {"CREATED", "OPENED"}
@@ -225,7 +228,7 @@ def test_opening_an_auction_tells_the_connected_bridge(empty_client):
         # The bridge must see the new auctionId: that is what makes it send CMD=STATUS so the tags re-JOIN.
         states = [m for m in drain(bridge) if m["type"] == "state"]
         assert states, "the bridge was told nothing about the newly opened auction"
-        assert states[-1]["auctionId"] == "bid3-010" and states[-1]["phase"] == "LOBBY"
+        assert states[-1]["auctionId"] == "bid3-010" and states[-1]["phase"] == "OPEN"
         assert set(states[-1]["tags"]) == {"TAG1", "TAG2"}
         assert intent(bridge, kind="JOIN", tag="TAG1", session="a", seq=2)["result"] == "ACCEPTED"
 
@@ -238,4 +241,4 @@ def test_opening_a_new_lot_moves_the_connected_bridge_to_it(client):
         assert client.post("/auctions/bid3-010/open", headers=ADMIN).status_code == 200
 
         states = [m for m in drain(bridge) if m["type"] == "state"]
-        assert states and states[-1]["auctionId"] == "bid3-010" and states[-1]["phase"] == "LOBBY"
+        assert states and states[-1]["auctionId"] == "bid3-010" and states[-1]["phase"] == "OPEN"
