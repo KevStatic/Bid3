@@ -152,13 +152,6 @@ With no env, the web app runs a labelled in-browser simulation and bundled sampl
 
 ## Changelog
 
-### 2026-11-07 ~03:55 IST: product and hackathon README
-- Rebuilt the root `README.md` as a product and judge-facing submission page after auditing the component READMEs, Arkiv documents, source contracts and live project log.
-- Added the live product URL, verified publisher wallet, a rerunnable Arkiv query and live testnet evidence. The public query returned four results (`bid3-004` through `bid3-007`); `bid3-004` is linked with its full result entity key and documented real-hardware outcome.
-- Added the exact Arkiv “Build on Arkiv (from scratch)” submission story and an Ethereum Foundation `CROPS` section covering censorship resistance, open source, privacy, security and explicit trust limitations. No Anon-RPC or alt-mempool integration is claimed.
-- Replaced stale Railway-centric root instructions with the actual product model, concise local runs, current laptop/tunnel limitation, architecture, AI-use disclosure, from-scratch declaration, reused public dependencies and known limitations.
-- Verified requirements against ETHGlobal Mumbai's current official prize page and rules. No runtime code or section 4 contract changed, so contract drift checks were not required. The demo-video URL and a measured hardware press-to-ack benchmark remain open.
-
 ### 2026-11-07 ~01:45 IST: new-lot.sh picks the next number
 - `scripts/new-lot.sh` with no argument asks the engine's `GET /auctions` for the highest `bid3-NNN` and opens the next one. Right now that's 6 (it has 3, 4 and 5; `bid3-hw-01` is ignored). An explicit number still works.
 - **Checked:** the number it picks, rejected arguments, and refusal of an existing ID. The no-argument path wasn't run end to end, because that would open a real lot.
