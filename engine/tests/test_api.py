@@ -13,9 +13,8 @@ ADMIN = {"Authorization": "Bearer admin-secret"}
 WORKER = {"Authorization": "Bearer worker-secret"}
 
 
-@pytest.fixture()
-def client(tmp_path):
-    settings = Settings(
+def make_settings(tmp_path, **overrides):
+    fields = dict(
         database_path=str(tmp_path / "bid3.sqlite"),
         bridge_token="bridge-secret",
         admin_token="admin-secret",
@@ -28,7 +27,20 @@ def client(tmp_path):
         seed_tags="TAG1:K7,TAG2:M4",
         seed_countdown_ms=1_000,
     )
-    with TestClient(create_app(settings)) as c:
+    fields.update(overrides)
+    return Settings(**fields)
+
+
+@pytest.fixture()
+def client(tmp_path):
+    with TestClient(create_app(make_settings(tmp_path))) as c:
+        yield c
+
+
+@pytest.fixture()
+def empty_client(tmp_path):
+    """An engine with no auction at all, as when the operator opens the first lot by hand."""
+    with TestClient(create_app(make_settings(tmp_path, seed_demo=False))) as c:
         yield c
 
 
@@ -38,6 +50,25 @@ def intent(ws, **fields):
         message = ws.receive_json()
         if message["type"] == "ack":
             return message
+
+
+def drain(ws):
+    """Everything the engine has already sent this socket: a ping's pong comes after it."""
+    ws.send_json({"type": "ping"})
+    messages = []
+    while True:
+        message = ws.receive_json()
+        if message["type"] == "pong":
+            return messages
+        messages.append(message)
+
+
+NEW_LOT = {
+    "auctionId": "bid3-010",
+    "listingId": "lot-010",
+    "rules": {"startPriceMinor": 5_000, "stepBps": 500, "countdownMs": 10_000, "ceilingMinor": 50_000, "timeLimitMs": 600_000},
+    "seats": [{"tagRef": "TAG1", "alias": "Q2"}, {"tagRef": "TAG2", "alias": "V9"}],
+}
 
 
 def test_health_and_seeded_auction(client):
@@ -162,3 +193,32 @@ def test_operator_can_create_and_open_an_auction(client):
     assert client.get("/health").json()["activeAuctionId"] == "bid3-010"
     journal = client.get("/auctions/bid3-010/journal", headers=ADMIN).json()
     assert {e["kind"] for e in journal} >= {"CREATED", "OPENED"}
+
+
+def test_opening_an_auction_tells_the_connected_bridge(empty_client):
+    # Repro from the V4/V5 review: engine with no auction, bridge connected, then POST /auctions + /open.
+    client = empty_client
+    with client.websocket_connect("/bridge?token=bridge-secret") as bridge:
+        assert drain(bridge) == []  # nothing open yet, so nothing to show
+        assert intent(bridge, kind="JOIN", tag="TAG1", session="a", seq=1)["result"] == "CLOSED"
+
+        assert client.post("/auctions", json=NEW_LOT, headers=ADMIN).status_code == 201
+        assert client.post("/auctions/bid3-010/open", headers=ADMIN).status_code == 200
+
+        # The bridge must see the new auctionId: that is what makes it send CMD=STATUS so the tags re-JOIN.
+        states = [m for m in drain(bridge) if m["type"] == "state"]
+        assert states, "the bridge was told nothing about the newly opened auction"
+        assert states[-1]["auctionId"] == "bid3-010" and states[-1]["phase"] == "LOBBY"
+        assert set(states[-1]["tags"]) == {"TAG1", "TAG2"}
+        assert intent(bridge, kind="JOIN", tag="TAG1", session="a", seq=2)["result"] == "ACCEPTED"
+
+
+def test_opening_a_new_lot_moves_the_connected_bridge_to_it(client):
+    with client.websocket_connect("/bridge?token=bridge-secret") as bridge:
+        assert {m["auctionId"] for m in drain(bridge) if m["type"] == "state"} == {"bid3-003"}
+
+        assert client.post("/auctions", json=NEW_LOT, headers=ADMIN).status_code == 201
+        assert client.post("/auctions/bid3-010/open", headers=ADMIN).status_code == 200
+
+        states = [m for m in drain(bridge) if m["type"] == "state"]
+        assert states and states[-1]["auctionId"] == "bid3-010" and states[-1]["phase"] == "LOBBY"

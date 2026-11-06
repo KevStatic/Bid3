@@ -6,7 +6,7 @@ Runs on the laptop the gateway is plugged into. It reads the gateway's USB seria
 cd bridge
 pip install -r requirements.txt
 python bid3_bridge.py --list-ports
-python bid3_bridge.py --port /dev/cu.usbserial-0001 --engine ws://localhost:8000 --token "$BRIDGE_TOKEN"
+python bid3_bridge.py --port /dev/cu.usbserial-0001 --engine ws://localhost:8010 --token "$BRIDGE_TOKEN"
 ```
 
 Use `wss://<engine-host>` for the deployed engine. Settings can also come from `ENGINE_URL`, `BRIDGE_TOKEN`, `SERIAL_PORT` and `SERIAL_BAUD` (default 115200).

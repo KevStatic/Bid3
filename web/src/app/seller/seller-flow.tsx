@@ -10,6 +10,7 @@ import { publishListing, type PublishOutcome } from "@/lib/arkiv/write-listing";
 import { config, explorerEntityUrl, isSampleArkiv, isSimulation } from "@/lib/config";
 import { formatMinor, percentFromBps, shortKey } from "@/lib/format";
 import { bidLadder, bidsToCeiling } from "@/lib/pricing";
+import { useEngineHealth, useFeaturedAuctionId } from "@/lib/use-featured-auction";
 
 const STEPS = ["Item", "Rules", "Paddles", "Readiness", "Open the round"] as const;
 type Step = (typeof STEPS)[number];
@@ -31,7 +32,15 @@ const toMinor = (text: string) => {
   return Number.isFinite(v) && v > 0 ? Math.round(v * 100) : null;
 };
 
+/** A fresh, unguessable suffix per listing, so nobody can write a look-alike listing for it first. */
+function newLotSuffix() {
+  const random = Array.from(crypto.getRandomValues(new Uint8Array(4)), (b) => (b % 36).toString(36)).join("");
+  return `${Date.now().toString(36)}${random}`;
+}
+
 export function SellerFlow() {
+  const featuredId = useFeaturedAuctionId();
+  const { data: engineHealth } = useEngineHealth();
   const { address, isConnected } = useAccount();
   const [step, setStepState] = useState<Step>("Item");
   const [visited, setVisited] = useState<Set<Step>>(() => new Set<Step>(["Item"]));
@@ -48,6 +57,8 @@ export function SellerFlow() {
   const [ceilingText, setCeilingText] = useState("1000.00");
   const [aliases, setAliases] = useState<[string, string]>(["K7", "M4"]);
   const [published, setPublished] = useState<PublishOutcome | null>(null);
+  /** This listing's own auction and listing IDs: never the live lot's, so a test listing can't take over its title. */
+  const [lot, setLot] = useState<{ auctionId: string; listingId: string } | null>(null);
   const [publishing, setPublishing] = useState(false);
   const [publishError, setPublishError] = useState<string | null>(null);
 
@@ -70,14 +81,54 @@ export function SellerFlow() {
     "Open the round": false,
   };
 
-  const readiness = [
+  const readiness: { label: string; ok: boolean; note?: string; detail?: string }[] = [
     { label: "Wallet connected", ok: isConnected },
     { label: "Listing published to Arkiv", ok: !!published },
     { label: "Rules are valid", ok: rulesValid },
     { label: "Two paddles assigned", ok: aliases[0] !== aliases[1] },
-    { label: "Gateway and bridge online", ok: !isSimulation, note: isSimulation ? "No engine connected. You can still open the round in simulation." : undefined },
+    isSimulation
+      ? { label: "Bridge connected to the engine", ok: false, note: "No engine connected. You can still open the round in simulation." }
+      : {
+          label: "Bridge connected to the engine",
+          ok: !!engineHealth?.bridgeConnected,
+          detail: engineHealth
+            ? engineHealth.bridgeConnected
+              ? undefined
+              : "Start the bridge on the laptop the gateway is plugged into."
+            : "Can't reach the engine.",
+        },
   ];
   const ready = readiness.every((r) => r.ok || r.note);
+
+  // Opening needs ADMIN_TOKEN, which must never reach the browser, so the operator runs these.
+  const engineUrl = config.engineHttpUrl ?? "http://localhost:8010";
+  const openCommands =
+    lot && rulesValid
+      ? [
+          `curl -X POST ${engineUrl}/auctions -H "Authorization: Bearer $ADMIN_TOKEN" -H 'content-type: application/json' -d '${JSON.stringify({
+            auctionId: lot.auctionId,
+            listingId: lot.listingId,
+            category: item.category,
+            rules: { startPriceMinor: startMinor, stepBps, countdownMs, ceilingMinor, timeLimitMs: 600_000 },
+            seats: [
+              { tagRef: "TAG1", alias: aliases[0] },
+              { tagRef: "TAG2", alias: aliases[1] },
+            ],
+          })}'`,
+          `curl -X POST ${engineUrl}/auctions/${lot.auctionId}/open -H "Authorization: Bearer $ADMIN_TOKEN"`,
+        ].join("\n")
+      : null;
+  const [copied, setCopied] = useState(false);
+  const onCopy = async () => {
+    if (!openCommands) return;
+    try {
+      await navigator.clipboard.writeText(openCommands);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2_000);
+    } catch {
+      // Clipboard blocked: the commands are still on screen to select by hand.
+    }
+  };
 
   const index = STEPS.indexOf(step);
   const go = (delta: number) => setStep(STEPS[Math.min(STEPS.length - 1, Math.max(0, index + delta))]);
@@ -86,12 +137,14 @@ export function SellerFlow() {
     if (!address) return;
     setPublishing(true);
     setPublishError(null);
+    const suffix = newLotSuffix();
+    const lotIds = { auctionId: `bid3-${suffix}`, listingId: `lot-${suffix}` };
     try {
       const outcome = await publishListing(
         {
-          listingId: `lot-${Date.now().toString(36)}`,
+          listingId: lotIds.listingId,
           lotNumber: 9,
-          auctionId: config.featuredAuctionId,
+          auctionId: lotIds.auctionId,
           title: item.title.trim(),
           category: item.category,
           condition: item.condition.trim(),
@@ -103,6 +156,7 @@ export function SellerFlow() {
         address,
       );
       setPublished(outcome);
+      setLot(lotIds);
     } catch (error) {
       setPublishError(error instanceof Error ? error.message : "The wallet didn't sign the listing.");
     } finally {
@@ -301,6 +355,7 @@ export function SellerFlow() {
                     <span>
                       <span className="font-semibold">{r.label}</span>
                       {r.note ? <span className="block text-sm text-ink-2">{r.note}</span> : null}
+                      {!r.ok && r.detail ? <span className="block text-sm text-ink-2">{r.detail}</span> : null}
                     </span>
                   </li>
                 ))}
@@ -326,7 +381,7 @@ export function SellerFlow() {
                 {isSimulation ? (
                   <>
                     {ready ? (
-                      <Link href={`/room/${config.featuredAuctionId}`} className={buttonClass("paddle", "lg")}>
+                      <Link href={`/room/${featuredId}`} className={buttonClass("paddle", "lg")}>
                         Open in simulation
                       </Link>
                     ) : (
@@ -336,11 +391,25 @@ export function SellerFlow() {
                     )}
                     <p className="text-sm text-ink-2">No engine is connected, so the room runs the labelled simulation.</p>
                   </>
-                ) : (
-                  <Button variant="paddle" size="lg" disabled={!ready}>
-                    Open the round
-                  </Button>
-                )}
+                ) : ready && openCommands && lot ? (
+                  <div className="w-full min-w-0">
+                    <p className="max-w-2xl text-sm text-ink-2">
+                      Opening needs the operator&apos;s admin token, which never ships to the browser. The operator runs these two commands; this
+                      lot&apos;s room is then live and becomes the one the paddles bid in. Paddles switch off and on to join it.
+                    </p>
+                    <pre className="tabular mt-4 overflow-x-auto whitespace-pre rounded-lg border border-line bg-surface-2 p-4 text-xs leading-relaxed">
+                      {openCommands}
+                    </pre>
+                    <div className="mt-4 flex flex-wrap items-center gap-3">
+                      <Button variant="primary" onClick={onCopy}>
+                        {copied ? "Copied" : "Copy commands"}
+                      </Button>
+                      <Link href={`/room/${lot.auctionId}`} className={buttonClass("paddle", "lg")}>
+                        Go to this lot&apos;s room
+                      </Link>
+                    </div>
+                  </div>
+                ) : null}
               </div>
               {!ready ? <p className="mt-3 text-sm text-halt">Finish the readiness checks first.</p> : null}
             </StepBody>

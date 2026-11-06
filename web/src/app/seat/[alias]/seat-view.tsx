@@ -5,10 +5,10 @@ import { HammerBar } from "@/components/auction/hammer-bar";
 import { PriceDisplay } from "@/components/auction/price-display";
 import { TagIllustration } from "@/components/tag-illustration";
 import { buttonClass, LotTag, Skeleton, SourceBadge } from "@/components/ui";
-import { config } from "@/lib/config";
 import { formatMinor } from "@/lib/format";
 import { useAuctionStream, useCountdown } from "@/lib/use-auction-stream";
 import { useListingByAuction } from "@/lib/use-arkiv";
+import { useFeaturedAuctionId } from "@/lib/use-featured-auction";
 
 const LIGHTS = [
   { look: "Slow pulse", meaning: "Joining the room" },
@@ -20,7 +20,7 @@ const LIGHTS = [
 ];
 
 export function SeatView({ alias }: { alias: string }) {
-  const auctionId = config.featuredAuctionId;
+  const auctionId = useFeaturedAuctionId();
   const { state, source, clockOffsetMs, lastBidSeq } = useAuctionStream(auctionId);
   const msLeft = useCountdown(state, clockOffsetMs);
   const { data: lot } = useListingByAuction(auctionId);

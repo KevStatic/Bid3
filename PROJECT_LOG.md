@@ -33,7 +33,7 @@ A live auction run with physical paddle tags, built for **ETHGlobal Mumbai (Nov 
 | Firmware | Arduino C++ for the tags and gateway, on branch **`firmware`** (not on `main`) | `origin/firmware` |
 | Commits | **Only Kev commits.** AI assistants write files but never run `git commit` or `git push` | — |
 
-Event timing: submissions reported as **Sun 8 Nov 2026, 09:00 IST** (confirm on the ETHGlobal dashboard). The plan targets submitting by 07:00.
+Event timing: submission deadline is **Sat 7 Nov 2026, 09:00 IST** (per Kev, Fri 6 Nov 17:00; earlier notes said Sun 8 Nov, so confirm on the ETHGlobal dashboard). The plan targets submitting by 07:00. Hardware cut-off: if the real-hardware round isn't working by 01:00, demo with the keyboard bridge (labelled) and show the hardware separately.
 
 ## 3. Repo layout
 
@@ -75,17 +75,17 @@ Checks that catch drift:
 
 ```bash
 # engine (seeds and opens auction bid3-003 with paddles TAG1->K7, TAG2->M4)
-cd engine && pip install -r requirements-dev.txt && python -m bid3_engine     # :8000
+cd engine && pip install -r requirements-dev.txt && python -m bid3_engine     # :8010 (8000 is taken on Kev's Mac)
 
 # bridge: real gateway, keyboard, or fake gateway
 cd bridge && pip install -r requirements.txt
 python bid3_bridge.py --port /dev/cu.usbserial-XXXX     # or --keyboard
 
 # web in live mode
-cd web && echo "NEXT_PUBLIC_ENGINE_WS_URL=ws://localhost:8000" > .env.local && npm install && npm run dev   # :3000
+cd web && echo "NEXT_PUBLIC_ENGINE_WS_URL=ws://localhost:8010" > .env.local && npm install && npm run dev   # :3000
 
 # arkiv worker (dry until ARKIV_PRIVATE_KEY is set)
-cd arkiv-worker && npm install && ENGINE_URL=http://localhost:8000 npm start
+cd arkiv-worker && npm install && ENGINE_URL=http://localhost:8010 npm start
 ```
 
 With no env, the web app runs a labelled in-browser simulation and bundled sample Arkiv data. Every surface shows its data source (Live, Simulation, From Arkiv, Sample data).
@@ -127,6 +127,50 @@ With no env, the web app runs a labelled in-browser simulation and bundled sampl
 ---
 
 ## Changelog
+
+### 2026-11-06 17:00 IST: deadline moved up
+- Section 2 "Event timing" now says **Sat 7 Nov 09:00 IST** (Kev), with a 01:00 hardware cut-off. Every chat should plan against Saturday.
+- `seed-listings` lots expire 26 h after the run. Run it after midnight so they're still up during judging.
+
+### 2026-11-06 (evening): seller flow can't hijack the live lot's title
+- **Own IDs per listing** (`web/src/app/seller/seller-flow.tsx`): a published listing gets a fresh random `auctionId` (`bid3-<time><rand>`) and a matching `listingId` (`lot-…`). It no longer reuses the live lot's ID.
+- **Trusted listing lookup** (`web/src/lib/arkiv/pick-listing.ts`, used by `live-reader.ts` `getListingByAuction`): fetches every listing with that `auctionId`, then chooses by these rules, in order:
+  1. Keep only the `listingId` named in the publisher-owned `AuctionDefinition`, when one exists. If none match, return no listing rather than a wrong one.
+  2. Drop listings whose owner isn't their own `sellerAddress`.
+  3. The publisher's own listing wins.
+  4. Otherwise the earliest-created listing (`$createdAt` block) wins.
+  - The sample reader is unchanged.
+  - For `bid3-003`, rule 3 only protects the title once `npm run seed-listings` has run with the publisher key. Until then, the earliest listing with `lot-003` wins.
+- **"Open the round" no longer a dead button:** in live mode, once the readiness checks pass, it shows the two operator `curl` commands (create + open) built from the seller's rules, paddles and new IDs, with a `$ADMIN_TOKEN` placeholder, plus a copy button and a link to the lot's room. The admin token still never reaches the browser.
+- **Real bridge check:** the readiness item is now "Bridge connected to the engine", read from `GET /health` `bridgeConnected`. Previously it only checked that an engine URL was set.
+- **`use-featured-auction.ts`:** now one shared React Query entry (`useEngineHealth`, 10 s poll) instead of a fetch per component.
+- **Checked:**
+  - `tsc` and `eslint` clean.
+  - `pickListing` passed 6 rule checks (scratch script, not committed: the web app has no test runner).
+  - In Kev's running `next dev` (:3000, engine on :8010), the header's Live room link follows the engine's active lot (`bid3-room-01`), and the readiness step shows the bridge as down. No console errors.
+- **Not checked:**
+  - `next build`: skipped because `next dev` was running on the same `.next` folder.
+  - The post-publish handoff block in a browser (needs a connected wallet).
+  - Live Arkiv reads.
+- **Still open:** `web/README.md` is stale about the seller flow, `/open` and `POST /items`.
+
+### 2026-11-06 (later still): engine hardening: new-lot notice, token check, token redaction
+- **New lot reaches the gateway at once** (`engine/bid3_engine/runtime.py`): `open()` now sets `active_auction_id` inside `apply()`, before the broadcast, so the connected bridge gets the new lot's state immediately. This is the engine part of `stash@{0}`, copied verbatim along with its two tests in `engine/tests/test_api.py`, so applying that stash later merges cleanly.
+  - The bridge on `main` doesn't send `CMD=STATUS` when the `auctionId` changes. After opening a new lot, paddles must switch off and on (or type `join TAG1` in `--keyboard` mode). The `firmware`-branch bridge in the stash does this automatically.
+- **Refuse to start without tokens** (`config.py`, `api.py`): new `REQUIRE_TOKENS` setting. It's on by default when Railway env vars are present (`RAILWAY_ENVIRONMENT_ID`, `RAILWAY_PROJECT_ID` or `RAILWAY_ENVIRONMENT`), and off locally. If on and any of `BRIDGE_TOKEN`, `ADMIN_TOKEN` or `WORKER_TOKEN` is empty, startup fails with a message naming them.
+- **Bridge token redacted from logs** (`__main__.py`): a `RedactTokens` filter on `uvicorn.error` and `uvicorn.access` rewrites `token=…` to `token=***`.
+- **Docs:** `engine/README.md` deploy steps now cover the volume, `REQUIRE_TOKENS`, `SEED_DEMO=0` plus opening a fresh lot, and re-joining paddles after a new lot. `.env.example` documents `REQUIRE_TOKENS`.
+- **Tests:** new `engine/tests/test_startup.py` (token refusal, Railway default, redaction). `pytest`: 39 passed.
+- **Verified for real:** ran the engine on port 8020 (8000 is Docker's; 8010 was already taken by another Python process, left untouched). Connected a bridge with a token: the log reads `WebSocket /bridge?token=***`, and the secret appears 0 times. With `RAILWAY_ENVIRONMENT_ID` set and no tokens, it exits with "refusing to start".
+- **Still open:** set the tokens and `SEED_DEMO=0` on Railway; the seller flow (unwired "Open the round", listing reuses the featured `auctionId`); the docs items from the entry below.
+
+### 2026-11-06 (later): deploy and demo fixes from the main-branch audit
+- **Default port is now 8010** everywhere (engine `__main__.py`, `.env.example`, Dockerfile `EXPOSE`, bridge default, worker default, READMEs, local `web/.env.local`). Port 8000 is used by something else on Kev's Mac; nothing was run on it.
+- **`engine/Dockerfile`:** removed `VOLUME ["/data"]` (Railway rejects it). Attach a Railway volume at `/data` instead.
+- **`web/src/lib/arkiv/live-reader.ts`:** definition, bid, snapshot and result reads now use `.ownedBy(publisher)`, so look-alike entities from other wallets are ignored. Listings stay open to any seller wallet.
+- **Featured lot read at runtime:** new `web/src/lib/use-featured-auction.ts` fetches the engine's `GET /health` `activeAuctionId` (falls back to `NEXT_PUBLIC_FEATURED_AUCTION_ID`). Used by the home page (`featured-live.tsx`), header, seat page and seller link. `engineHttpUrl` now derives from the WS URL when unset.
+- **Checked:** `tsc --noEmit` and `eslint` pass in `web/`. Not re-run: engine tests, worker typecheck (no `node_modules` there), live Arkiv reads.
+- **Still open (not done here):** set `SEED_DEMO=0` on Railway and open a fresh lot before the demo (the seeded lot closes UNSOLD after 10 min); set all three tokens on Railway; ~~the engine logs the bridge URL including `token=`; gateway isn't told when a new lot opens~~ (both fixed in the entry above); seller "Open the round" still unwired and the seller flow still writes `auctionId` of the featured lot, so a test listing can replace its title; docs (`arkiv/*.md`, root README, Track row); `web/README.md` is stale about `/open` and `POST /items`; explorer URL format unconfirmed.
 
 ### 2026-11-06 ~10:05 IST: firmware branch and multi-chat setup
 - **New branch:** `firmware` (on origin), for Arduino C++ tag and gateway firmware. No firmware changes pushed yet; the team is reworking the code.

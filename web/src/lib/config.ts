@@ -9,8 +9,10 @@
 const trimSlash = (value: string | undefined) => value?.replace(/\/+$/, "") || undefined;
 
 export const config = {
-  engineHttpUrl: trimSlash(process.env.NEXT_PUBLIC_ENGINE_HTTP_URL),
   engineWsUrl: trimSlash(process.env.NEXT_PUBLIC_ENGINE_WS_URL),
+  /** Falls back to the WebSocket URL with ws -> http, so one variable is enough. */
+  engineHttpUrl:
+    trimSlash(process.env.NEXT_PUBLIC_ENGINE_HTTP_URL) ?? trimSlash(process.env.NEXT_PUBLIC_ENGINE_WS_URL)?.replace(/^ws/, "http"),
 
   arkivMode: (process.env.NEXT_PUBLIC_ARKIV_MODE === "live" ? "live" : "sample") as "live" | "sample",
   /** Read-only access key for the public Arkiv RPC. It ships to the browser, so never reuse a write key here. */
