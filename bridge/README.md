@@ -37,13 +37,13 @@ AUCTION_EVENT_JSON={"kind":"LINK","tag":"TAG2","link":"LOST"}
 | `stateVersion` | BID, optional | The last `stateVersion` the tag was told about. If a bid landed since, the press is refused as `STALE` |
 | `link` | LINK only | `OK` or `LOST`. Send `LOST` when a switched-on tag disconnects, `OK` when it reconnects |
 
-**Smallest change from your current test firmware:** where the gateway increments its button counter, print `AUCTION_EVENT_JSON={"kind":"BID","tag":"TAG1","seq":<counter>}`. Do the same for switch ON/OFF with `JOIN`/`LEAVE`.
+**V4 firmware:** individual JOIN/LEAVE/BID notifications are signed by the enrolled tag. Do not derive auction bids from legacy snapshot counter deltas. Use the matching sources in [../firmware](../firmware) and configure the engine to require enrolled signatures.
 
 ### Bridge → gateway
 
 ```
 AUCTION_STATE_JSON={"phase":"COUNTDOWN","price":11025,"next":11576,"leader":"K7","msLeft":3200,"stateVersion":42,"tags":{"TAG1":{"alias":"K7","status":"ACTIVE","leader":true},"TAG2":{"alias":"M4","status":"ACTIVE","leader":false}}}
-AUCTION_ACK_JSON={"tag":"TAG1","seq":2,"kind":"BID","result":"ACCEPTED","reason":null}
+AUCTION_ACK_JSON={"tag":"TAG1","session":"b7","seq":2,"kind":"BID","result":"ACCEPTED","reason":null}
 CMD=STATUS
 ```
 
@@ -55,3 +55,15 @@ CMD=STATUS
 - **`CMD=STATUS`:** sent whenever the bridge (re)connects. Reply with a `JOIN` (or `LINK` `OK`) for every connected tag whose switch is ON. After any outage the engine treats paddles as "signal lost" until they re-announce, so the room stays paused until you do.
 
 If the engine is unreachable, the bridge sends `{"phase":"PAUSED","reason":"engine offline"}` and acks every press as `CLOSED`, instead of queueing stale presses.
+
+## V4 acknowledgement and health extension
+
+The bridge echoes each pending intent's **session** into its ACK. It maintains FIFO session correlation by (tag, seq), so a delayed ACK cannot confirm a new tag session reusing a sequence. V4 firmware requires this field. After connection or active-auction changes, CMD=STATUS requests authenticated tag re-announcement.
+
+The bridge reads serial one byte followed by already-available bytes, delivering each completed line without the previous read(256)/500ms batch wait. Lines are bounded at 16 KiB. This removes a software delay; it does not establish a physical bid latency guarantee.
+
+The gateway emits AUCTION_STATUS_JSON with build=V4_WORKING_BASE and running=true every 500 ms. The bridge reports the gateway down after 1.5 s without valid status even if its USB port remains open. WebSocket ping/pong liveness is checked every 500 ms with a 2 s pong timeout. AUCTION_BRIDGE_JSON={"engine":"ok"|"down"} informs firmware of engine connectivity. On loss the bridge reports PAUSED and refuses offline intents; firmware does not declare a local winner.
+
+The engine's existing Bid3.Intent.v1 canonical signature remains unchanged. It does not bind auctionId/epoch: use one active lot and drain pending intents before changing lots. Set countdownMs=10000 and enroll each seat's publicKey when creating the auction; SEED_COUNTDOWN_MS affects newly seeded auctions only. See [../firmware/INTEGRATION_BRIEF.md](../firmware/INTEGRATION_BRIEF.md).
+
+Run bridge regressions with `python -m unittest discover -s tests -v` from bridge/. Tests use a real OS pseudo-terminal and synthetic WebSocket acknowledgements; they do not access real boards or an external engine.

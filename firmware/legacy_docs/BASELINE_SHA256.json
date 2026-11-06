@@ -1,0 +1,12 @@
+{
+  "Gateway/Crypto.h": "a3106adae338657a35d2d285847d8737728d1af1d66ac72bcf491962aa344bd0",
+  "Gateway/TagWire.h": "37563adcace654052b3239ddc413c91c1fde6f236597c4cb2068d315974ef496",
+  "Gateway/ButtonWire.h": "514a6969152d05e82bdcfff45a15fb60e3a45d6b34a45230ddcf64093adc05e5",
+  "Gateway/ButtonSecurity.h": "4d87e34e9c2bef998e1a2ffd8b217ec3d92c6961d8fc0af20239800fbe78e81c",
+  "Gateway/ButtonTracker.h": "6e5c3d055f0df49974c06670b240287fb19af4a443acdea1782a968d599885fc",
+  "Gateway/RuntimePolicy.h": "41a41c50fdadaef2008a6a7e9b1a55090a8996dfe238f2eeb04c794efc88b46c",
+  "Gateway/Oled.h": "9bfcc439401baf40d92409e1720149b40b57d354ab7c10b5c6d8ef12a3fa9d11",
+  "Gateway/SoundOutput.h": "1ec6539b7e9844201df1cb614908f2d26a4b8de4913b263c45b1e76eeeeb39cd",
+  "Gateway/VerifierSelfTest.h": "f76e5b1768a6ade9acf192ccf29095e21557ae048436a9813740a14d76f7cc93",
+  "shared/ButtonInput.h": "8c4c20d674ab5d80812257cab6f54e4f9945dc804252b2158d68f626c73ceae3"
+}

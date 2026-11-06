@@ -1,0 +1,7 @@
+# Apply alongside the existing deployment settings; no secrets are included.
+INTENT_SIGNATURES_REQUIRED=1
+AUTO_RESUME=1
+SEED_COUNTDOWN_MS=10000
+# countdownMs=10000 on each newly created auction is authoritative.
+# Existing stored/frozen auction rules do not change via this variable.
+# Enroll both public keys from auction-template.json before opening the lot.
