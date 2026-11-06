@@ -135,6 +135,55 @@ With no env, the web app runs a labelled in-browser simulation and bundled sampl
 
 ## Changelog
 
+### 2026-11-07: prepare the landing-page work for origin/frontend
+- The user explicitly requested committing and pushing this frontend work to the existing frontend branch, authorizing those actions over the usual Kev-only convention. Started from the current origin/frontend head; no main merge, history rewrite or backend/firmware changes are included.
+- Completed the frontend review: corrected the landing-page signal-loss explanation to match the existing isolated-paddle policy, replaced the old browser icon with the approved logo, and documented product-image provenance, OLED export steps and font attribution in web/public/ASSETS.md.
+- Validation passed: ESLint, TypeScript, isolated optimized production build, production browser checks at desktop/mobile widths, responsive photo loading, the new icon route and OLED pause/play. The production browser reported no console errors. The local dev server remained running throughout the isolated build.
+
+### 2026-11-07: remove duplicate tag captions
+- Removed the yellow TAG01/TAG02/TAG03 captions below the landing-card photos. The IDs remain on each physical label and in image alt text. Frontend-only change.
+
+### 2026-11-07: IDs on the tag photographs
+- Positioned TAG01, TAG02 and TAG03 directly over the blank physical label in each landing-page tag photo. The labels scale with the photo container; the existing accessible captions remain below. Frontend-only change.
+
+### 2026-11-07: real tag photographs in the how-it-works cards
+- Retouched IMG_5674.jpg as the primary tag photo, with IMG_5667.jpg as the sharp-detail/lighting reference, using the built-in image editing tool. Saved the transparent cutout in web/public/images/tag-cutout.png; originals are preserved. Cleared the old physical TAG02 lettering so separate page captions can identify each card consistently.
+- Replaced the three landing-page tag illustrations with the photograph and centred TAG01, TAG02 and TAG03 captions beneath it. Retained the step numbers, titles and explanatory copy. Verified image loading, labels, desktop/mobile layout and no horizontal overflow; TypeScript and page ESLint pass. No backend, firmware, engine, bridge, worker or protocol files changed.
+- A downloadable copy and the exact edit prompt are saved under the workspace outputs/product-images folder.
+
+### 2026-11-07: animate the gateway photograph's OLED
+- Added web/src/components/gateway-photo.tsx: a precisely positioned 128x64 canvas replaces only the photographed OLED content. The original gateway photo remains intact. Includes a labelled firmware preview, pause/play, reduced-motion still, offscreen/hidden-tab suspension and static-photo fallback.
+- Exported 545 original firmware framebuffers at Config::DISPLAY_FPS (25 fps) using the read-only frontend exporter web/scripts/render-gateway-oled.cpp. The 21.8 s loop contains the real startup and three idle scenes, with no fake bidders or bid decisions. Static data and font attribution are in web/public/animations/. Rebuild from web with clang++ -std=c++17 scripts/render-gateway-oled.cpp -o /tmp/bid3-oled-export, then /tmp/bid3-oled-export public/animations/gateway-oled.bin.
+- Verified exporter metadata/size, TypeScript, page/component ESLint, desktop and mobile alignment and playback controls. No backend, firmware, engine, bridge, worker or protocol files were changed; the existing firmware renderer was read only.
+
+### 2026-11-07: gateway photo in the landing hero
+- Replaced only the landing hero's featured lot card with the owner's edited transparent gateway photograph at web/public/images/gateway-cutout.png. Uses responsive Next Image sizing, intrinsic dimensions and descriptive alt text. The live-room link remains available beside the headline.
+- Verified desktop and 390 px layouts, image loading and no horizontal overflow; TypeScript and page ESLint pass. No backend, protocol, engine, bridge, worker or firmware changes.
+
+### 2026-11-07: cursor-local headline colour
+- Added HeroHeadline with a soft 110 px yellow text mask that follows the pointer and fades in/out over 300 ms. All headline text rests in the default ink colour; only letters near the cursor turn yellow. Scoped styles live in globals.css to match the project's Tailwind loader.
+- Pointer updates are batched through animation frames without React renders; the decorative duplicate is hidden from assistive technology. Touch uses the normal headline, reduced motion disables the transition, and forced colours hide the overlay. Browser checks confirm local masking and fade-out without overflow; TypeScript and ESLint pass.
+
+### 2026-11-07: balance the headline accent
+- Replaced scattered yellow words with one continuous yellow phrase, Press to bid, to give the landing headline a clear focal point.
+
+### 2026-11-07: highlight the hero's key words
+- Applied the existing yellow paddle colour to paddle, bid and wins in the landing-page headline, keeping its bold typography and wording.
+
+### 2026-11-07: small logo gap adjustment
+- Added 4 px of breathing room between the header symbol and Bid3 in web/src/components/brand.tsx at the owner's request.
+
+### 2026-11-07: tighten header logo spacing
+- Removed the wordmark gap and compensated for the PNG's transparent right margin in web/src/components/brand.tsx so the symbol sits directly beside Bid3.
+
+### 2026-11-07: final logo and flat grid background
+- Added the owner's supplied transparent PNG as web/public/brand/bid3-logo.png and replaced the shared header/footer paddle mark with that image in web/src/components/brand.tsx. Adjusted the footer mark size for its transparent margins.
+- Added an optional glow prop to AnimatedGrid and disabled it on the landing page, removing the bright ambient patch while retaining the animated grid. Verified the logo loads and the glow is absent at desktop and 390 px widths; TypeScript and ESLint pass.
+
+### 2026-11-07: landing-page animated grid background
+- Added the supplied CSS-only AnimatedGrid component in web/src/components/ui/animated-grid.tsx and placed it behind the landing page in web/src/app/page.tsx. Uses the existing line/cobalt theme tokens; no new dependencies or changes to page content and auction behaviour.
+- Kept the backdrop decorative and pointer-transparent, with scoped reduced-motion and forced-colour rules. Verified desktop and 390 px layouts without horizontal overflow; TypeScript and ESLint pass. No open items for this change.
+
 ### 2026-11-07: prepare final V6 reconnect pull request
 - Integrated current main into firmware to resolve the shared project-log conflict before creating the requested PR. Preserved both sets of log entries and all current main runtime/Arkiv/transcript work.
 - The final V6 reconnect ZIP remains the firmware source of truth: all gateway, tag and shared source bytes are unchanged by integration. The later local verification-timing variant remains excluded.

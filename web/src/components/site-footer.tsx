@@ -7,7 +7,7 @@ export function SiteFooter() {
     <footer className="mt-24 border-t border-line">
       <div className="mx-auto grid w-full max-w-[76rem] gap-8 px-4 py-10 text-sm text-ink-2 sm:px-6 md:grid-cols-[1.4fr_1fr_1fr] lg:px-8">
         <div className="flex items-start gap-3">
-          <PaddleMark className="size-6 shrink-0" />
+          <PaddleMark className="size-9 shrink-0" />
           <p className="max-w-sm">
             Bid3 runs live auctions from physical paddles. Listings, bids and hammer prices are public Arkiv entities, readable
             without our server.
