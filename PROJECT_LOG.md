@@ -253,6 +253,21 @@ With no env, the web app runs a labelled in-browser simulation and bundled sampl
 - **Neither the engine nor the bridge loads a `.env` file.** They read only the shell environment; there's no dotenv. The worker (`tsx --env-file-if-exists=.env`) and the web app (`.env.local`) do load theirs.
 - Fixed the misleading first line of `engine/.env.example` to say how to load it: `set -a; source .env; set +a`.
 
+### 2026-11-07: prepare final V6 reconnect pull request
+- Integrated current main into firmware to resolve the shared project-log conflict before creating the requested PR. Preserved both sets of log entries and all current main runtime/Arkiv/transcript work.
+- The final V6 reconnect ZIP remains the firmware source of truth: all gateway, tag and shared source bytes are unchanged by integration. The later local verification-timing variant remains excluded.
+- Rechecked the merged engine suite, firmware/bridge host checks and Arkiv schema agreement; GitHub checks validate the integration commit. This prepares the PR only; no merge into main, cloud deployment or device flash is performed.
+
+### 2026-11-07: publish the user's final V6 reconnect archive
+- The user explicitly requested uploading only Downloads/JOB/Bid3_Firmware_V6_ReconnectFix_2026-11-06.zip to origin/firmware, authorizing this commit/push over the usual Kev-only convention. Archive SHA-256: 4e1fc3857d6c9bfe2a1493ca6ffcaa0968ee7baa1f33db830a73ebd12cfce727.
+- Imported the supplied V6_RECONNECT_FEEDBACK_FIX gateway, Tag01, Tag02, canonical shared headers, regression and documentation. Every board/shared source is byte-identical to the archive. The separate local verification-timing experiment is not included.
+- Kept the existing canonical bridge/engine and repository validation/dependency paths; verified the archive's duplicate bridge and engine runtime source already match those canonical files. Adapted documentation links and regenerated the repository checksum manifest. No backend/web runtime or cloud/device deployment change.
+- Verified archive integrity, all source checksums/shared copies, 13 sanitized C++ programs, 23 firmware + 2 bridge Python tests and all 44 engine tests before push. GitHub board CI is checked afterward. Physical RF/acoustic acceptance remains unchanged.
+
+### 2026-11-06: prepare V6 firmware pull request against current main
+- Merged main's deploy/demo hardening into firmware before creating the requested pull request. Preserved the latest port 8010 defaults, token enforcement/redaction, new-lot broadcast fix, seller/Arkiv work and all project-log entries.
+- Resolved append-only conflicts in PROJECT_LOG.md and engine/tests/test_api.py by retaining both V6 fault-isolation regressions and main's new-auction notification tests. Firmware source/keys/wiring are unchanged.
+- Rechecked firmware integrity/host regressions, all 44 combined engine tests and Arkiv schema drift before publishing the merge. The user's explicit pull-request request authorizes this integration commit/push; no PR merge, cloud deployment or device flash is performed.
 ### 2026-11-06 ~21:15 IST: go-live preparation
 - **Don't start the worker against the engine running since 12:50.**
   - It runs old code: no V6 rule, no token or transcript changes.

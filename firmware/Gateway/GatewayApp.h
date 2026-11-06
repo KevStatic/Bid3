@@ -106,6 +106,7 @@ void checkLinkDeadline(uint32_t now){
 } // namespace GatewayApp
 #include "FastGateway.h"
 namespace GatewayApp {
+FastFeedback::Discovery discoveryFeedback[2];
 bool transact(BLEClient*client,const Candidate&candidate,int tag){
  FastGuard io(fastSlots[tag].io);
  char phase[12];snprintf(phase,sizeof(phase),"LINK%02d",tag+1);post(0,tag+1,candidate.rssi,phase);
@@ -201,7 +202,7 @@ void setupGateway(){
  events=xQueueCreate(32,sizeof(Event));scanLock=xSemaphoreCreateMutex();oled.begin();
  Preferences ui;if(ui.begin("bt-ui",true)){oled.sh1106=ui.getBool("sh1106",Config::DEFAULT_SH1106);sound.activeModule=ui.getBool("activeBuzzer",Config::DEFAULT_ACTIVE_BUZZER);sound.activeLow=ui.getBool("activeLow",Config::DEFAULT_ACTIVE_LOW);ui.end();}
  fastFeature.store(fastGatewayInit());fxActiveModule.store(sound.activeModule);fxActiveLow.store(sound.activeLow);
- Serial.println("\nBid3 V6 TAG_OFF_FIX / original BT discovery and BTB1 signed proofs / 115200 baud");
+ Serial.println("\nBid3 V6 RECONNECT_FEEDBACK_FIX / original BT discovery and BTB1 signed proofs / 115200 baud");
  Serial.println("Upload the matching V6 tag sketches. Fast input begins only after the original enrolled proof verifies.");
  Serial.println("NO GPIO33 required. BLE runs while USB-powered, independently of OLED/switch availability.");
  if(!events||!scanLock||!ledsReady){view.fatal=true;Serial.println("FATAL: queue, LED PWM, cryptographic identity or verifier self-test failed.");}
@@ -222,11 +223,11 @@ void loopGateway(){
   if(e.type==4){view.fatal=true;active.store(false);}
   if(e.type!=1)snprintf(view.phase,sizeof(view.phase),"%s",e.label);
   if(e.tag<1||e.tag>2)continue;TagView&t=view.tags[e.tag-1];
-  if(e.type==1){bool arrived=!t.seen||uint32_t(e.at-t.lastRadio)>=Config::TAG_RETURN_MS;
+  if(e.type==1){bool arrived=discoveryFeedback[e.tag-1].radio(e.at,Config::TAG_RETURN_MS);
    t.seen=true;t.lastRadio=e.at;t.rssi=e.rssi;
    if(arrived&&oled.ready&&active.load())queueSound(Audio::NEARBY,e.tag); // discovery is NOT a verified identity
   }
-  if(e.type==2){bool newlyVerified=!fresh(t,e.at);t.seen=true;t.verified=true;t.lastRadio=e.at;t.lastProof=e.at;t.rssi=e.rssi;t.valid=e.valid;t.moving=e.moving;++t.count;++view.proofs;
+  if(e.type==2){bool newlyVerified=discoveryFeedback[e.tag-1].proof(e.at,Config::FRESH_MS);t.seen=true;t.verified=true;t.lastRadio=e.at;t.lastProof=e.at;t.rssi=e.rssi;t.valid=e.valid;t.moving=e.moving;++t.count;++view.proofs;
    if(e.valid){if(t.historyCount<20)++t.historyCount;else memmove(t.history,t.history+1,19);t.history[t.historyCount-1]=std::min(9,int(e.norm/100));}
    String digest=Security::hex(e.digest,8);snprintf(view.digest,sizeof(view.digest),"%s",digest.c_str());if(!((view.event==3||view.event==4||view.event==5||view.event==6||view.event==7||view.event==8)&&uint32_t(now-view.eventAt)<2200)){view.event=1;view.eventTag=e.tag;view.eventAt=now;}if(newlyVerified&&oled.ready&&active.load())queueSound(Audio::VERIFIED,e.tag);
   }else if(e.type==3){++view.errors;view.event=2;view.eventTag=e.tag;view.eventAt=now;errorUntil=now+2000;}

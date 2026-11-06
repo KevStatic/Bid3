@@ -26,7 +26,7 @@ Green plus tone means engine-accepted BID; red plus tone means refused BID. A BU
 
 **Current engine scope:** one active auction, using its existing v1 intent contract. That signature does not include auctionId/epoch. Close the previous lot, stop pressing, and drain/acknowledge pending events before changing the active lot; the bridge requests fresh JOINs for the next lot. This release does not add cryptographic cross-round replay protection, parallel auction routing, payments or escrow. Those require a coordinated engine/signature-contract change.
 
-See `VALIDATION.md` for actual build/test results. RF, real OLED/buzzer timing and maximum end-to-end latency still require testing on the assembled devices. This update changes firmware and the matching bridge. Engine/web runtime code and cloud deployment are unchanged.
+See `VALIDATION.md` for actual build/test results. RF, real OLED/buzzer timing and maximum end-to-end latency still require testing on the assembled devices. This patch changes gateway feedback only; the matching V6 bridge is included for completeness. Engine/web runtime code and cloud deployment are unchanged.
 
 ## V6 required engine update
 
