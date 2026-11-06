@@ -207,6 +207,31 @@
   animation: pulse-dot 1.6s ease-in-out infinite;
 }
 
+.hero-headline {
+  position: relative;
+}
+
+.hero-headline-spotlight {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  user-select: none;
+  opacity: 0;
+  -webkit-mask-image: radial-gradient(circle 110px at var(--spot-x, -200px) var(--spot-y, -200px), #000 15%, transparent 100%);
+  mask-image: radial-gradient(circle 110px at var(--spot-x, -200px) var(--spot-y, -200px), #000 15%, transparent 100%);
+  transition: opacity 300ms ease;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .hero-headline[data-hovered="true"] .hero-headline-spotlight {
+    opacity: 1;
+  }
+}
+
+@media (forced-colors: active) {
+  .hero-headline-spotlight { display: none; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .animate-bid-land,
   .animate-row-in,
