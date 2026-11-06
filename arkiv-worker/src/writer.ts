@@ -43,8 +43,9 @@ export function createWriter() {
   const owner = account.address;
 
   /**
-   * After an uncertain failure the write may have landed anyway. Entity keys can't be
-   * fixed in advance, so look for our own entity with the same logical identity first.
+   * After an uncertain failure the write may have landed anyway. predictEntityKeys can't help:
+   * keys derive from the owner's nonce, so a retry mints a different key. Look for our own
+   * entity with the same logical identity first (arkiv/friction.md #3).
    */
   async function existing(item: OutboxItem): Promise<string | null> {
     const p = item.payload;

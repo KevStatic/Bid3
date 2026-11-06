@@ -23,6 +23,8 @@ npm start                   # runs dry (writes nothing) until ARKIV_PRIVATE_KEY 
 4. Put the logged publisher address in the web app's `NEXT_PUBLIC_PUBLISHER_ADDRESS`, so the results page can verify the issuer.
 5. Optional: `npm run seed-listings` writes the demo lot to Arkiv so the catalogue has a live entry.
 
+To check what's on Arkiv without the engine or the web app, run `npm run query-results -- <publisher address>`. It needs no key; this is the query the root README gives judges.
+
 ## What it writes
 
 | Entity | Flags | Expires | Why |
