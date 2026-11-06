@@ -1,0 +1,25 @@
+{
+  "name": "bid3-arkiv-worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Drains the Bid3 engine's outbox into Arkiv entities.",
+  "scripts": {
+    "start": "tsx --env-file-if-exists=.env src/index.ts",
+    "seed-listings": "tsx --env-file-if-exists=.env src/seed-listings.ts",
+    "check-schemas": "node scripts/check-schemas.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=22.10"
+  },
+  "dependencies": {
+    "@arkiv-network/sdk": "^1.0.1",
+    "tsx": "^4.23.15",
+    "viem": "^2.57.16"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "typescript": "^5.9.3"
+  }
+}
