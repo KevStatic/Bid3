@@ -10,6 +10,8 @@ export function useListings(filter: ListingFilter) {
     queryKey: ["arkiv", "listings", filter],
     queryFn: async () => (await getArkivReader()).listListings(filter),
     placeholderData: (previous) => previous,
+    // A listing a seller publishes from any wallet shows up for everyone without a reload.
+    refetchInterval: 15_000,
   });
 }
 
@@ -38,6 +40,7 @@ export function useResults() {
   return useQuery({
     queryKey: ["arkiv", "results"],
     queryFn: async () => (await getArkivReader()).listResults(),
+    refetchInterval: 15_000,
   });
 }
 

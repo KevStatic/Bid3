@@ -145,7 +145,7 @@ def create_app(settings: Settings | None = None, runtime: Runtime | None = None)
     async def list_auctions() -> list[dict[str, Any]]:
         now = runtime.clock()
         return [
-            {"auctionId": a.auction_id, "listingId": a.listing_id, "phase": a.phase, "priceMinor": a.price_minor, "bidCount": a.bid_count, "stateVersion": a.state_version, "serverTimeMs": now}
+            {"auctionId": a.auction_id, "listingId": a.listing_id, "phase": a.phase, "priceMinor": a.price_minor, "bidCount": a.bid_count, "leaderAlias": a.leader_alias, "stateVersion": a.state_version, "serverTimeMs": now}
             for a in runtime.auctions.values()
         ]
 

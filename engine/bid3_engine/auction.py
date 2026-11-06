@@ -214,14 +214,16 @@ class Auction:
     # ------------------------------------------------------------- control
 
     def open(self, now_ms: int) -> Outcome:
-        """Freeze the rules and let paddles join."""
+        """The operator declares bidding open: freeze the rules and start the no-bid clock.
+        Bidding is open at once. A paddle can join at any time and bid as soon as it's in, and a
+        lone bidder can win. With no bid within timeLimitMs the lot closes UNSOLD."""
         out = Outcome()
         if self.phase != "DRAFT":
             out.reason = f"cannot open from {self.phase}"
             return out
         hashable = {"auctionId": self.auction_id, "epoch": self.epoch, "listingId": self.listing_id, **self.rules.to_json()}
         self.rules_hash = rules_hash(hashable)
-        self.phase = "LOBBY"
+        self.phase = "OPEN"
         self._start_round_clock(now_ms)
         self._bump(now_ms)
         out.changed = True
@@ -280,10 +282,8 @@ class Auction:
         if self.leader_alias is not None:
             self.phase = "COUNTDOWN"
             self._restart_countdown(now_ms)
-        elif self.active_count() >= 2:
-            self.phase = "OPEN"
         else:
-            self.phase = "LOBBY"
+            self.phase = "OPEN"  # bidding was opened by the operator and stays open
         self.pause_reason = None
         self.paused_from = None
         self._start_round_clock(now_ms)
@@ -340,7 +340,8 @@ class Auction:
         seat.status = "ACTIVE"
         if self.active_count() >= 2:
             self.had_competition = True
-        if self.phase == "LOBBY" and self.active_count() >= 2:
+        if self.phase == "LOBBY":
+            # Only lots opened by an older engine are still in LOBBY: the first paddle in opens bidding.
             self.phase = "OPEN"
         self._bump(now_ms)
         out.changed, out.ack = True, "ACCEPTED"
@@ -363,9 +364,7 @@ class Auction:
             out.ack = "ACCEPTED"
             return out
         seat.status = "OUT"
-        # A leading bid stays binding; only an open round with no bids falls back to the lobby.
-        if self.phase == "OPEN" and self.active_count() < 2:
-            self.phase = "LOBBY"
+        # A leading bid stays binding, and bidding stays open: the operator opened it, not the paddles.
         self._bump(now_ms)
         out.changed, out.ack = True, "ACCEPTED"
         out.journal.append(("LEAVE", {"alias": seat.alias}))
@@ -401,7 +400,7 @@ class Auction:
             out.journal.append(("BID_REFUSED", {"alias": seat.alias, "reason": out.reason}))
             return out
         if self.phase not in BIDDING_PHASES:
-            out.ack, out.reason = "IGNORED", "bidding opens when two paddles are on" if self.phase == "LOBBY" else f"auction is {self.phase}"
+            out.ack, out.reason = "IGNORED", "bidding isn't open yet" if self.phase == "LOBBY" else f"auction is {self.phase}"
             out.journal.append(("BID_REFUSED", {"alias": seat.alias, "reason": out.reason}))
             return out
         if seat.status != "ACTIVE":
@@ -494,8 +493,7 @@ class Auction:
     def _closing_checks(self) -> tuple[bool, str | None]:
         if self.leader_alias is None:
             return False, "no leader"
-        if not self.had_competition:
-            return False, "two paddles were never on together"
+        # A lone bidder wins at their bid: the operator opened bidding, so nobody else joining is not a fault.
         if self.health["bridge"] != "ok" or self.health["gateway"] != "ok":
             return False, "the gateway or bridge is down"
         if self.result is not None:

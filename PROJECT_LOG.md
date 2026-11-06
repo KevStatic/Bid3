@@ -23,13 +23,14 @@ A live auction run with physical paddle tags, built for **ETHGlobal Mumbai (Nov 
 | Sponsor | **Arkiv only** (one Arkiv track prize + optional Swarm bonus) | `arkiv/` |
 | Track | **Build on Arkiv (from scratch)** (Kev, Fri 6 Nov ~19:30). Requires ETHGlobal's Classic rules: no pre-existing project-specific code; see the changelog entry "track and rules" | `README.md`, `arkiv/` |
 | Button | **Press = bid at the next step** (not a jump bid on a running clock) | engine `auction.py` |
+| Who opens bidding | **The auctioneer**, on one lot at a time, from the website's `/admin` page (password). Bidding is open at once; no minimum number of paddles; any seated paddle can join at any time and bid. A **lone bidder wins** at their bid. A **no-bid timer** (1/2/5/10 min, chosen by the auctioneer) runs from opening; with no bid the lot closes UNSOLD and goes back to the seller (Kev, Sat 7 Nov ~02:15) | engine `auction.py`, `web/src/app/admin/` |
 | Leader switches OFF | **Bid stays binding**; they can still win | engine `auction.py` |
 | Step | **+5% per bid** (500 bps), configurable per auction | rules |
 | Countdown | V6 hardware rounds use 10 s via published countdownMs=10000; unchanged engine seed defaults to 5 s unless SEED_COUNTDOWN_MS=10000 | auction rules / engine env |
 | Stale presses | A press whose `stateVersion` predates the latest bid is refused as `STALE` | engine + firmware |
 | Frontend | Next.js 16 on Vercel | `web/` |
 | Backend | FastAPI engine + Python bridge on the laptop + TypeScript Arkiv worker | `engine/`, `bridge/`, `arkiv-worker/` |
-| Hosting | Vercel (web), Railway (engine + worker, one engine instance, volume at `/data`) | READMEs |
+| Hosting | Vercel (web). Engine, worker and bridge run on Kev's laptop; the engine is public through a Cloudflare quick tunnel (Railway trial expired; Kev, Fri 6 Nov ~22:15) | READMEs (still say Railway), changelog "hosting moved to the laptop" |
 | Firmware | Arduino C++ for the tags and gateway, on branch **`firmware`** (not on `main`) | `origin/firmware` |
 | Commits | **Only Kev commits.** AI assistants write files but never run `git commit` or `git push` | — |
 
@@ -67,6 +68,9 @@ Planning documents (outside the repo): `/Users/kev/Hackathons/EthGlobal/Plans/`.
 | Arkiv entity schemas (5 types) | `web/src/lib/arkiv/schemas.ts` | `arkiv-worker/src/schemas.ts` (identical copy) |
 | Serial protocol (115200; AUCTION_EVENT/STATE/ACK_JSON, session-correlated ACKs, AUCTION_STATUS/BRIDGE_JSON, CMD=STATUS) | `bridge/README.md` | gateway firmware |
 | Outbox (`GET /outbox`, `POST /outbox/{id}/published`) | `engine/bid3_engine/api.py` | `arkiv-worker/src/index.ts` |
+| Public lot list `GET /auctions` (auctionId, listingId, phase, priceMinor, bidCount, leaderAlias) | `engine/bid3_engine/api.py` | `web/src/lib/lot-state.ts` (`EngineLot`) |
+| Admin calls (`POST /auctions`, `/open`, `/cancel` with `ADMIN_TOKEN`; house rules 5% / 10 s / ceiling 10× opening) | `engine/bid3_engine/api.py` | `web/src/lib/admin/server.ts` |
+| Paddle roster (tagRef, alias, publicKey per seat) | `firmware/integration/auction-template.json` | `web/src/lib/admin/paddles.ts`. Check: `jq -c '[.seats[] \| {tagRef, alias, publicKey}]' firmware/integration/auction-template.json` and compare |
 
 V6 firmware retains the V4 AUCTION serial contract and remains compatible with the existing bridge. Each JOIN/LEAVE/BID is signed using the existing engine Bid3.Intent.v1 format; enable INTENT_SIGNATURES_REQUIRED and enroll the seat public keys. The engine remains the sole auction authority. V6 templates use a 10-second countdown; existing frozen auctions and the engine's 5-second seed default are not changed silently. V1 signatures do not include auctionId/epoch: one active lot and drained pending requests are required before switching lots. Cross-round replay protection remains a coordinated engine-contract follow-up.
 
@@ -76,6 +80,25 @@ Checks that catch drift:
 - `cd arkiv-worker && npm run check-schemas`
 
 ## 5. How to run everything locally
+
+**Live setup (Kev's laptop, current).** Open four VS Code terminals and rename each one (right-click → Rename). Start them in this order:
+
+| Terminal | Command | Ready when |
+|---|---|---|
+| `engine` | `cd engine && set -a && source .env && set +a && caffeinate -i .venv/bin/python -m bid3_engine` | `Uvicorn running on http://0.0.0.0:8010` |
+| `worker` | `cd arkiv-worker && npm start` | `Writing to Arkiv as 0xCf11CEa33b48A48901DD2a03730524a69E64e32d` |
+| `bridge` | `cd bridge && set -a && source ../engine/.env && set +a && ../engine/.venv/bin/python bid3_bridge.py --port /dev/cu.usbserial-<n> --engine ws://localhost:8010 --token "$BRIDGE_TOKEN"` | `/health` shows `bridgeConnected: true` |
+| `ops` | `scripts/tunnel.sh` (once). Then run lots from **`https://bid3.vercel.app/admin`** ("Open bidding" per lot). Fallbacks: `scripts/new-lot.sh` / `scripts/auto-rounds.sh` (create their own keyboard listing, no admin) | the tunnel script prints ✅ for the engine and the site |
+
+**Admin page:** needs two **server** env vars in Vercel, both type Secret and without the `NEXT_PUBLIC_` prefix: `ADMIN_TOKEN` (the same value as in `engine/.env`) and `ADMIN_PASSWORD` (Kev's choice). The browser sends the password to `/api/admin/*`; the server calls the engine through the tunnel with the token. The demo catalogue is `npm run seed-catalogue` in `arkiv-worker` (six items, lots 11–16, `bid3-cat-NN`; safe to rerun).
+
+**Tunnel:** `scripts/tunnel.sh` runs `cloudflared` in the background, outside any terminal (log: `~/Library/Logs/bid3-tunnel.log`).
+- Closing terminals or restarting the engine, worker or bridge doesn't change its URL. Only a reboot or `scripts/tunnel.sh stop` does.
+- Each run prints the current URL and checks whether `bid3.vercel.app` is built with it. If not, set Vercel's `NEXT_PUBLIC_ENGINE_WS_URL=wss://…` and redeploy.
+- Leave `NEXT_PUBLIC_ENGINE_HTTP_URL` unset: the site works it out from the WS URL.
+- The gateway never uses the tunnel.
+
+**Dev from scratch:**
 
 ```bash
 # engine (seeds and opens auction bid3-003 with paddles TAG1->K7, TAG2->M4)
@@ -111,7 +134,7 @@ With no env, the web app runs a labelled in-browser simulation and bundled sampl
    - Run the worker live and run `npm run seed-listings`.
    - Set `NEXT_PUBLIC_ARKIV_MODE=live`, `NEXT_PUBLIC_ARKIV_ACCESS_KEY` and `NEXT_PUBLIC_PUBLISHER_ADDRESS` in web.
    - Confirm the explorer entity URL format in `web/src/lib/config.ts` (`explorerEntityUrl`).
-4. **Deploy:** Vercel (`web`, root dir `web`) and Railway (`engine` with volume, `arkiv-worker`); set the env vars from each `.env.example`.
+4. **Deploy:** Vercel (`web`, root dir `web`). Engine and worker run on the laptop, with the engine behind `cloudflared tunnel --url http://localhost:8010`. Point Vercel's engine URLs at the tunnel, and redeploy whenever the tunnel URL changes.
 5. **Arkiv write-ups:**
    - `arkiv/friction.md`: log snags as they happen, with time, expected, actual and repro.
    - `reach.md`, `why-arkiv.md`, `how-you-use-arkiv.md`.
@@ -134,6 +157,11 @@ With no env, the web app runs a labelled in-browser simulation and bundled sampl
 ---
 
 ## Changelog
+
+### 2026-11-07: integrate current main for the landing-page PR
+- The user's PR request authorizes the routine integration commit and branch push. Merged current main into frontend without rewriting history and resolved the sole shared-log conflict by preserving both sets of entries.
+- Updated the landing step's opening explanation to match main's existing auctioneer-led rules. No backend implementation edits were authored: engine, bridge, worker and firmware match main. The PR diff is limited to web/ and this log.
+- Re-ran ESLint, TypeScript and an isolated optimized production build successfully after integration, including main's admin routes. The pull request targets main; this preparation does not merge the PR.
 
 ### 2026-11-07: prepare the landing-page work for origin/frontend
 - The user explicitly requested committing and pushing this frontend work to the existing frontend branch, authorizing those actions over the usual Kev-only convention. Started from the current origin/frontend head; no main merge, history rewrite or backend/firmware changes are included.
@@ -183,6 +211,157 @@ With no env, the web app runs a labelled in-browser simulation and bundled sampl
 ### 2026-11-07: landing-page animated grid background
 - Added the supplied CSS-only AnimatedGrid component in web/src/components/ui/animated-grid.tsx and placed it behind the landing page in web/src/app/page.tsx. Uses the existing line/cobalt theme tokens; no new dependencies or changes to page content and auction behaviour.
 - Kept the backdrop decorative and pointer-transparent, with scoped reduced-motion and forced-colour rules. Verified desktop and 390 px layouts without horizontal overflow; TypeScript and ESLint pass. No open items for this change.
+
+### 2026-11-07 ~03:30 IST: auctioneer opens bidding; catalogue of real lots; sellers from any wallet
+Kev asked for this (Sat ~02:15). He also asked that working code not be disturbed, so every part below was tested before being called done.
+
+- **Engine rules (`engine/bid3_engine/auction.py`):**
+  - `open()` goes straight to OPEN: the operator declares bidding open.
+  - No two-paddle minimum: joining no longer opens bidding, and leaving no longer sends the lot back to LOBBY.
+  - Resuming with no leader returns to OPEN.
+  - The "two paddles were never on together" closing check is removed, so a **lone bidder wins** at their bid.
+  - The no-bid timer (`timeLimitMs`) was already counted from opening and already closes the lot UNSOLD.
+  - A lot an older engine left in LOBBY opens on its first JOIN.
+  - `hadCompetition` is still tracked but no longer required. It isn't part of AuctionResult, so the Arkiv contract is unchanged.
+- **`GET /auctions`** now also returns `leaderAlias`, an extra field.
+- **Engine tests:** 4 updated to the new rule, 5 added (lone bidder wins; timer from opening; joining mid-countdown can bid; leaving doesn't close bidding; old LOBBY lot opens on join). `pytest` 49 passed. Firmware `test_current_engine_v4` OK, bridge 2 passed, vectors unchanged, `check-schemas` OK.
+- **Web rules wording and simulator** match the engine (`simulator.ts`, `phase-copy.ts`, seat page, simulation controls).
+- **Lots page:**
+  - New `web/src/lib/lot-state.ts` gives each lot's real state: from the engine's `GET /auctions` (polled every 5 s), otherwise from publisher-owned AuctionResults on Arkiv, otherwise "Up next".
+  - The lot card shows Live now / Up next / Sold to Paddle X for Y / Unsold, back with the seller.
+  - The status chips filter on that state. Category and price filters are still Arkiv queries.
+  - Listings and results refetch every 15 s, so new listings reach every viewer.
+- **Six demo items** (`arkiv-worker/src/seed-catalogue.ts`, `npm run seed-catalogue`): lots 11–16, `bid3-cat-11`…`16`, `item-11`…`16`, status UPCOMING, listed for 7 days, owned by the publisher. Written to Arkiv at ~03:00; a second run skipped all six.
+- **Admin page `/admin`:** password sign-in, "On the block" with Withdraw, the no-bid timer (1/2/5/10 min), and the lot list with "Open bidding" on Up-next lots.
+  - Server routes `/api/admin/{login,start,cancel}` and `web/src/lib/admin/server.ts`. `ADMIN_TOKEN` and `ADMIN_PASSWORD` stay on the server.
+  - It refuses to start while another lot is still running.
+  - It seats the paddle roster (`web/src/lib/admin/paddles.ts`, checked identical to the firmware template) with house rules: 5%, 10 s, ceiling 10× the opening bid.
+  - Tested the route handlers against a fake engine: not configured gives 503; wrong password 401; a bad timer or ID 400; another lot running 409; withdraw works; start creates the right body and then opens; a duplicate lot gives 409; every engine call carries the token.
+- **Sell an item:** one form (title, category, condition, opening bid, description), published from the connected wallet.
+  - It switches the wallet to Rabdi, adding the network if needed, and shows friendly errors for no tGLM (with a faucet link) and a cancelled signature.
+  - Lot numbers continue after the highest listed.
+  - "Your lots" shows the seller each outcome; unsold lots say "back with you". This is the seller's notification.
+  - The old Rules, Paddles, Readiness and operator `curl` steps are gone: the auctioneer applies house rules from the admin page.
+- **Web checks:** whole-app `tsc` and `eslint` clean; `next build` passes (in a scratch copy; Kev's `web/.next` untouched).
+- **Not tested:**
+  - In a browser: the admin page, the new Lots page and the seller page.
+  - A real seller publish from MetaMask: the switch to Rabdi, gas, the write.
+  - The new engine rules with the real paddles.
+- **To go live:**
+  1. Stop `auto-rounds` and restart the engine; the new rules need it. Lot `bid3-007`, left in LOBBY by the old rules, then opens on the first JOIN; withdraw it from `/admin` if not wanted.
+  2. Add `ADMIN_TOKEN` and `ADMIN_PASSWORD` in Vercel.
+  3. Commit and push.
+- **Not updated (Sanskar's, checksummed):** `firmware/BIDDING_RULES.md` line 8 still says fewer than two bidders means LOBBY, and `FAST_PROTOCOL.md` and `VALIDATION.md` mention LOBBY. The firmware works unchanged: it just shows OPEN sooner.
+
+### 2026-11-07 ~02:05 IST: automatic back-to-back rounds
+- **New `scripts/auto-rounds.sh`:** opens the next lot (via `new-lot.sh`) and prints a line whenever the phase, bid count, leader or paddles change.
+  - After a sale it waits `PAUSE_S` (default 20 s), then opens the next lot.
+  - It stops by itself when a lot closes UNSOLD or CANCELLED, so an unattended room doesn't keep publishing empty lots to Arkiv.
+  - If a lot is already running when it starts, it watches that lot first. `--watch <id>` only shows one lot's progress.
+- **No paddle toggling between lots:** confirmed in `bridge/bid3_bridge.py` that the bridge sends `CMD=STATUS` when the `auctionId` changes, which asks the gateway to re-announce switched-on tags. The open Live room page follows to each new lot.
+- **Checked under macOS bash 3.2:** `--watch` on three closed lots returns at once with the right lines, and the stop and continue rules work. **Not checked:** the full loop, because it opens real lots on the engine and Arkiv. Its first real run will be the test.
+- **Merge check:** Kev's merge of PR #2 kept both sets of log entries, and there are no conflict markers left.
+
+### 2026-11-07 ~01:45 IST: new-lot.sh picks the next number
+- `scripts/new-lot.sh` with no argument asks the engine's `GET /auctions` for the highest `bid3-NNN` and opens the next one. Right now that's 6 (it has 3, 4 and 5; `bid3-hw-01` is ignored). An explicit number still works.
+- **Checked:** the number it picks, rejected arguments, and refusal of an existing ID. The no-argument path wasn't run end to end, because that would open a real lot.
+- **Pulling `origin/main`:** it has Sanskar's 3 firmware commits (PR #2, V6 reconnect fix: gateway sources, docs, checksums, one C++ test) plus entries in this log. A simulated merge (`git merge-tree`) conflicts only in `PROJECT_LOG.md`, where both sides added entries at the top; keep both. No engine, bridge, worker or web file is touched. The new firmware only takes effect once it's flashed to the boards.
+- The 7 files to commit were scanned for the engine tokens, the publisher key, the old leaked key and the access key. None are present, and both `.env` files are gitignored.
+
+### 2026-11-07 ~01:30 IST: live room follows the next lot
+- **Problem:** `/room/bid3-004` kept showing lot 4 after `scripts/new-lot.sh 5` opened `bid3-005`, because the room is tied to the lot in its URL. On the deployment URL Kev was using (`web-a4iifikev-…vercel.app`), the engine's CORS also blocks `/health`, so even the header link fell back to `NEXT_PUBLIC_FEATURED_AUCTION_ID`.
+- **Change in `web/src/app/room/[auctionId]/room-view.tsx`:**
+  - If the page watched a lot live, and the engine's `activeAuctionId` (from `/health`, polled every 10 s) moves to another lot after that lot closes, the room switches to the new lot in place.
+  - The address bar is updated with `history.replaceState` (supported by Next 16's router), so there's no navigation, no remount, and full screen survives.
+  - Title, snapshot and bids link use the state's own `auctionId`, so a stale old-lot frame never shows under the new lot's title.
+  - Opening an old lot's room directly (for example from Results) shows a "newer lot is live" link instead of moving.
+- **Checked:** `tsc --noEmit` and `eslint` pass. **Not checked:** behaviour in a browser; the next `new-lot.sh` run will exercise it. Live on Vercel only after Kev commits and pushes.
+- **Use `https://bid3.vercel.app`.** It's the only Vercel origin in the engine's `CORS_ORIGINS`; the follow logic needs `/health`.
+
+### 2026-11-07 ~01:15 IST: first full hardware round verified on Arkiv
+- **Round:** `bid3-004` ran on the real gateway and paddles (after replugging the CH340 gateway and restarting the bridge). There were 11 bids alternating M4 and K7, from 100.00 up to 162.89. It sold to M4 at 162.89, and the live room on Vercel showed it in real time through the tunnel.
+- **Read back from Arkiv** with the SDK, filtered to the new publisher `0xCf11…e32d`:
+  - Listing `lot-004`: entity `0x3069d66f…8fd6`.
+  - AuctionDefinition: rules hash `0x385c7900…c5d2`, entity `0x2476a5a3…71a3`.
+  - All 11 AuctionBid entities, prices matching the +5% ladder.
+  - AuctionResult: SOLD, M4, 162.89, 11 bids, entity `0x6d84cd90…1222`.
+- **Cost:** the whole round (listing, rules, 11 bids, snapshots, result) used 0.00444 tGLM of gas. The publisher has 9.983 tGLM left. Prices are demo credits; no ETH or tokens change hands.
+- **Note:** Kev's screenshot was on the deployment URL `web-a4iifikev-kevstatics-projects.vercel.app`. The engine's CORS only allows `https://bid3.vercel.app` (and localhost), so use `bid3.vercel.app` for the demo. The WebSocket worked on the other URL, but its HTTP calls to the engine are blocked there.
+
+### 2026-11-07 ~00:20 IST: gateway connected but presses not reaching the engine
+- **What happened:** `bid3-004` opened at 00:13 and went straight to PAUSED with "The gateway is down". Its input log had no JOIN or BID.
+  - The gateway's OLED counted presses, but that's only its local receipt.
+  - The bridge had logged nothing except `engine connected`.
+- **Cause:** the gateway's USB-serial chip is a CH340 (`1a86:7523`) on macOS's built-in driver.
+  - `/dev/cu.usbserial-10` opens and `tcgetattr` works, but every `tcsetattr`, even with unchanged settings, fails with `(22, 'Invalid argument')`. The driver is stuck; unplugging and replugging the gateway clears it.
+  - The bridge retried every 2 s without logging, because it only logged a failure after a previous success.
+- **Fix in `bridge/bid3_bridge.py`:** a failure to open the port is now logged once per distinct error, with a hint to replug. Logging only; the serial protocol is unchanged.
+  - Checked: bridge `pytest` 2 passed; a missing port is logged exactly once over 6 s; firmware `test_current_engine_v4` passes.
+  - Not run locally: the firmware C++ host checks (the local clang/SDK linker is broken: "unknown architecture arm64e.x1") and two tests that need `cryptography`. Both fail the same way on the unmodified bridge.
+- **Engine behaviour confirmed from the code:** the no-bid time limit doesn't run while a lot is paused, and the engine resumes on its own when the gateway reports ok.
+
+### 2026-11-07 ~00:15 IST: background tunnel
+- **Problem:** each `cloudflared` restart got a new random quick-tunnel URL, so Vercel needed a redeploy. It kept happening because the tunnel ran in a VS Code terminal and died when terminals were closed.
+- **New `scripts/tunnel.sh`:** starts `cloudflared` in the background (nohup, metrics on `127.0.0.1:20299`), or reuses the one already running.
+  - Prints the URL and whether the engine answers through it.
+  - Checks the live site's bundle to see which tunnel URL it was built with, and says exactly what to change in Vercel if it doesn't match.
+  - `scripts/tunnel.sh stop` stops it.
+- **Checked:** two full start/reuse/stop cycles. It reports the engine as not running when it's down and detects the stale Vercel build. It hasn't been run against a running engine yet.
+- **Runbook (section 5):** now four terminals; the tunnel isn't one of them.
+- **First real run (~00:20):** the tunnel `vaccine-furnished-with-boat.trycloudflare.com` took longer than the script's 30 s check to start answering, then worked. The script now waits up to 90 s and says it's waiting. Vercel still needs this WS URL set, `NEXT_PUBLIC_ENGINE_HTTP_URL` deleted, and a redeploy.
+- **Options considered for a permanent URL:**
+  - Tailscale Funnel: free, no domain needed, stable `*.ts.net` name. In beta; WebSocket support isn't stated in its docs, so it needs testing.
+  - ngrok's free static domain: 20,000 requests a month. The site polls `/health` every 10 s per open tab, about 8,600 a day, so it could run out during judging.
+  - Named Cloudflare tunnel: needs a domain on Cloudflare.
+  - Not adopted for now.
+
+### 2026-11-06 ~23:55 IST: terminal runbook
+- Section 5 now has the five-terminal live setup (engine, tunnel, worker, bridge, ops), with the command to run in each and the line that shows it's ready.
+- **Checked the redeployed site:** publisher `0xcf11…e32d`, `arkivMode: "live"` and featured `bid3-004` are built in, and the WS URL is the current tunnel. **But `NEXT_PUBLIC_ENGINE_HTTP_URL` was still the dead `emphasis-press-strips-danny` tunnel.** Kev will delete it in Vercel; the app derives the HTTP URL from the WS URL.
+- The worker running at that point was started at 23:21, before the key rotation, so it still used the leaked key. Kev is restarting all terminals.
+
+### 2026-11-06 ~23:45 IST: first hardware round; publisher key leaked and replaced
+- **The hardware round works end to end.**
+  - Lot `bid3-hw-01`: both paddles joined through the gateway with signatures required. M4 bid 100.00, and the lot hammered SOLD after the 10 s countdown.
+  - The worker published the result. `npm run query-results` shows it on Arkiv along with `bid3-003` UNSOLD.
+- **Publisher key leak:** `NEXT_PUBLIC_PUBLISHER_ADDRESS` in Vercel held the publisher's private key, not its address, so it was built into the public bundle at `bid3.vercel.app`.
+  - Git and the local env files were checked: the key is in neither.
+  - Old publisher `0xcA499f30Eb36B6Cd76520B90457E1a3FCbc3242f` is abandoned. Its two results now count as unverified, which is correct.
+  - New publisher `0xCf11CEa33b48A48901DD2a03730524a69E64e32d`. Its key was generated straight into `arkiv-worker/.env` and never displayed.
+  - 9.987 tGLM moved from the old wallet to the new one, with Kev's approval: tx `0x766c91c57629bb46b6b945843ea8c739cafb6822df666dcf554dcc35eeaec8fb`, block 301264.
+  - Older Vercel deployments still contain the old key; the wallet is empty and abandoned.
+- **Tunnel:** `cloudflared` was restarted, so the URL is now `subsidiary-equivalent-saved-rachel.trycloudflare.com`. The old one returns 530.
+- **Why Results showed only demo data:** the site was built with `NEXT_PUBLIC_ARKIV_MODE=sample`, and its "publisher address" was the private key.
+- **Code:**
+  - `arkiv-worker/src/seed-listings.ts` takes a lot number: `npm run seed-listings -- 4` lists `lot-004` for `bid3-004`. The default is still 3.
+  - New `scripts/new-lot.sh <n>`: lists lot N on Arkiv, creates `bid3-00N` from the firmware template with `listingId lot-00N` and a 30-minute no-bid limit (override with `TIME_LIMIT_MS`), and opens it. It refuses an ID the engine already has.
+  - Checked: worker `typecheck` and `check-schemas` pass; the script's argument checks and duplicate-ID guard work. The script's full run has not been tested, because it writes to Arkiv.
+- **Open:**
+  - In Vercel: set the new publisher **address**, the new tunnel URLs, `NEXT_PUBLIC_ARKIV_MODE=live` and `NEXT_PUBLIC_FEATURED_AUCTION_ID=bid3-004`, then redeploy.
+  - Restart the worker so it loads the new key, before opening any lot.
+  - `query-results` with no access key hung for more than 5 minutes on the public endpoint; with the key it took a few seconds. The README tells judges it "needs no key", so check that before submitting.
+  - The README's writer-wallet TODOs should name the new publisher.
+
+### 2026-11-06 ~22:15 IST: hosting moved to the laptop
+- **Why:** the Railway trial expired. Render's free tier sleeps after 15 minutes idle, wipes its filesystem (the SQLite journal and outbox) and has no free background workers. Kev chose the laptop with a tunnel over paying.
+- **Setup:**
+  - Engine, worker and bridge all run on the laptop and talk over `localhost`.
+  - Only the browser needs the tunnel: `cloudflared tunnel --url http://localhost:8010` gives a `https://….trycloudflare.com` URL, and Vercel's `NEXT_PUBLIC_ENGINE_WS_URL` / `NEXT_PUBLIC_ENGINE_HTTP_URL` point at it.
+  - The quick-tunnel URL changes every time `cloudflared` restarts. Vercel then needs both URLs updated and a redeploy.
+- **New local files (gitignored, not committed):**
+  - `engine/.env`: fresh tokens, `DATABASE_PATH=./data/live.sqlite`, `SEED_DEMO=0`, `INTENT_SIGNATURES_REQUIRED=1`, `REQUIRE_TOKENS=1` (the engine is public through the tunnel, and token checks only switch on by default on Railway).
+  - `arkiv-worker/.env`: `ENGINE_URL=http://localhost:8010` and the same `WORKER_TOKEN`. `ARKIV_PRIVATE_KEY` and `ARKIV_ACCESS_KEY` are left for Kev to fill in.
+- **Still open:**
+  - The old engine (PID 2478, since 12:50, `data/v5.sqlite`) is still on :8010. Stop it before starting the new one.
+  - ~~Add the Vercel production URL to `CORS_ORIGINS`.~~ Done (~23:15): the site is `https://bid3.vercel.app`, and `engine/.env` has `CORS_ORIGINS=http://localhost:3000,https://bid3.vercel.app`. It takes effect on the next engine restart.
+  - At 23:15, the live Vercel build still had no `NEXT_PUBLIC_*` values built in: its bundle reads them as unset. It needs a redeploy after the env vars are saved.
+  - `bid3-003` closed UNSOLD at 23:03 (opened 22:53 with no paddles). Its UNSOLD result is on Arkiv, so that ID is used up. The real round needs a new `auctionId`, and `seed-listings` still hard-codes `bid3-003` / `lot-003`.
+  - The live room only works while the laptop is awake and online; the Arkiv data stays readable regardless.
+  - The READMEs (root, `engine/`, `arkiv-worker/`) still describe Railway.
+
+### 2026-11-06 ~21:30 IST: env files
+- **Neither the engine nor the bridge loads a `.env` file.** They read only the shell environment; there's no dotenv. The worker (`tsx --env-file-if-exists=.env`) and the web app (`.env.local`) do load theirs.
+- Fixed the misleading first line of `engine/.env.example` to say how to load it: `set -a; source .env; set +a`.
 
 ### 2026-11-07: prepare final V6 reconnect pull request
 - Integrated current main into firmware to resolve the shared project-log conflict before creating the requested PR. Preserved both sets of log entries and all current main runtime/Arkiv/transcript work.

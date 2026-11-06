@@ -121,7 +121,7 @@ export class AuctionSimulator {
     if (!paddle || paddle.status === "ACTIVE") return;
     paddle.status = "ACTIVE";
     if (this.activeCount() >= 2) this.hadCompetition = true;
-    if (this.state.phase === "LOBBY" && this.activeCount() >= 2) this.state.phase = "OPEN";
+    if (this.state.phase === "LOBBY") this.state.phase = "OPEN";
     this.commit();
   }
 
@@ -130,8 +130,7 @@ export class AuctionSimulator {
     const paddle = this.paddle(alias);
     if (!paddle || paddle.status !== "ACTIVE") return;
     paddle.status = "OUT";
-    // A standing leading bid stays binding; the countdown keeps running.
-    if (this.state.phase === "OPEN" && this.activeCount() < 2) this.state.phase = "LOBBY";
+    // A standing leading bid stays binding, and bidding stays open (the operator opened it).
     this.commit();
   }
 
@@ -182,7 +181,7 @@ export class AuctionSimulator {
       auctionId: this.auctionId,
       epoch,
       stateVersion: 1,
-      phase: "LOBBY",
+      phase: "OPEN", // the engine opens bidding as soon as the operator opens the lot
       rules: this.rules,
       priceMinor: this.rules.startPriceMinor,
       nextPriceMinor: this.rules.startPriceMinor,
@@ -208,7 +207,8 @@ export class AuctionSimulator {
     }
 
     if (this.state.phase === "COUNTDOWN" && this.state.countdown && now >= this.state.countdown.deadlineMs) {
-      if (this.state.leaderAlias && this.hadCompetition) {
+      if (this.state.leaderAlias) {
+        // A lone bidder wins at their bid, as in the engine.
         this.state.phase = "SOLD_LOCKED";
         this.state.result = {
           winnerAlias: this.state.leaderAlias,

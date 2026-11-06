@@ -9,7 +9,7 @@ import { RecentResults } from "./recent-results";
 const STEPS = [
   {
     title: "Switch your paddle on",
-    body: "Slide the switch to join the room. The light glows steady once the room has you. Two paddles on and bidding opens.",
+    body: "Slide the switch to join the room. The light glows steady once the room has you. Bidding starts when the auctioneer opens the round.",
     tagLabel: "TAG01",
   },
   {

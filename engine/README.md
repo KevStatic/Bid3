@@ -21,12 +21,17 @@ Point the web app at it with `NEXT_PUBLIC_ENGINE_WS_URL=ws://localhost:8010` (an
 All rules live in `bid3_engine/auction.py`, a pure state machine with no I/O and the clock passed in, so every scenario is a plain unit test.
 
 ```
-DRAFT --open--> LOBBY --2 paddles on--> OPEN --first BID--> COUNTDOWN --hammer--> SOLD_LOCKED
-                  ^                       |                   |  ^
-                  +--- a paddle leaves ---+       BID restarts +--+
-            LOBBY/OPEN/COUNTDOWN --bridge or gateway down--> PAUSED --all back--> (resume)
-            LOBBY/OPEN --time limit, no bids--> UNSOLD          any --operator--> CANCELLED
+DRAFT --operator opens bidding--> OPEN --first BID--> COUNTDOWN --hammer--> SOLD_LOCKED
+                                                        |  ^
+                                           BID restarts +--+
+            OPEN/COUNTDOWN --bridge or gateway down--> PAUSED --all back--> (resume)
+            OPEN --time limit, no bids--> UNSOLD                any --operator--> CANCELLED
 ```
+
+- **The operator opens bidding** (`POST /auctions/{id}/open`, or the website's admin page). Bidding is open at once: no minimum number of paddles. Any seated paddle can switch on at any time, even mid-countdown, and bid straight away.
+- **A lone bidder wins** at their bid when the countdown runs out.
+- **No-bid timer:** `timeLimitMs` counts from the moment bidding opens (pauses excluded). With no bid by then the lot closes UNSOLD.
+- LOBBY is only seen on lots opened by an older engine; the first paddle to join opens bidding on them.
 
 - Each accepted BID costs `price(bidCount)`, makes the presser the leader and restarts the countdown.
 - The leader can't outbid themselves; switching off doesn't withdraw a leading bid.

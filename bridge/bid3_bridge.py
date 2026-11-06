@@ -77,11 +77,13 @@ class Gateway:
     def _run(self) -> None:
         import serial  # pyserial
 
+        last_open_error: str | None = None
         while not self._stop.is_set():
             try:
                 self._serial = serial.Serial(self.port_name, self.baud, timeout=0.05)
                 self.connected = True
                 self.last_status_at = 0.0
+                last_open_error = None
                 log.info("gateway connected on %s", self.port_name)
                 self._emit(("gateway", "ok"))
                 buffer = b""
@@ -109,6 +111,15 @@ class Gateway:
                 if self.connected:
                     log.warning("gateway lost: %s", exc)
                     self._emit(("gateway", "down"))
+                elif str(exc) != last_open_error:
+                    # Log each new reason once instead of failing silently every 2 s. A CH340 gateway on macOS
+                    # can get stuck answering "(22, 'Invalid argument')"; unplugging and replugging clears it.
+                    log.warning(
+                        "can't open the gateway on %s: %s. Retrying every 2 s; if this persists, unplug and replug the gateway.",
+                        self.port_name,
+                        exc,
+                    )
+                    last_open_error = str(exc)
                 self.connected = False
                 with contextlib.suppress(Exception):
                     if self._serial:
