@@ -3,12 +3,11 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Suspense, useState } from "react";
-import { useFeaturedAuctionId } from "@/lib/use-featured-auction";
 import { Wordmark } from "./brand";
 import { WalletButton } from "./wallet-button";
 
-const navFor = (roomId: string) => [
-  { href: `/room/${roomId}`, match: "/room", label: "Live room" },
+const NAV = [
+  { href: "/room", match: "/room", label: "Live room" },
   { href: "/catalogue", match: "/catalogue", label: "Lots" },
   { href: "/explorer", match: "/explorer", label: "Results" },
   { href: "/seller", match: "/seller", label: "Sell an item" },
@@ -19,7 +18,6 @@ const isActive = (pathname: string | null, match: string) =>
 
 /** The link list; `pathname` is null in the prerendered shell, before URL data streams in. */
 function NavItems({ pathname, variant, onNavigate }: { pathname: string | null; variant: "bar" | "sheet"; onNavigate?: () => void }) {
-  const NAV = navFor(useFeaturedAuctionId());
   if (variant === "sheet") {
     return (
       <ul className="flex flex-col">

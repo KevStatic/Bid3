@@ -25,7 +25,7 @@ A live auction run with physical paddle tags, built for **ETHGlobal Mumbai (Nov 
 | Button | **Press = bid at the next step** (not a jump bid on a running clock) | engine `auction.py` |
 | Who opens bidding | **The auctioneer**, on one lot at a time, from the website's `/admin` page (password). Bidding is open at once; no minimum number of paddles; any seated paddle can join at any time and bid. A **lone bidder wins** at their bid. A **no-bid timer** (1/2/5/10 min, chosen by the auctioneer) runs from opening; with no bid the lot closes UNSOLD and goes back to the seller (Kev, Sat 7 Nov ~02:15) | engine `auction.py`, `web/src/app/admin/` |
 | Leader switches OFF | **Bid stays binding**; they can still win | engine `auction.py` |
-| Payment | **The winning paddle's wallet pays the seller on Sepolia.** A bidder links their wallet by tapping the paddle's NFC sticker (`/seat/<alias>`, a signature, no gas). After the hammer the winner confirms the payment on their phone. The rate is **0 ETH per credit** (only gas), editable on `/admin`. If the winner doesn't pay within 10 min (or has no wallet, or the lot has no seller wallet), **the lot stays with the seller**. Paddles without a wallet can still bid. Off unless the engine has `PAYMENTS=1` (Kev, Sat 7 Nov ~04:30) | engine `payments.py`, `web/src/lib/payments*.ts` |
+| Payment | **The winning paddle's wallet pays the seller on Sepolia.** Tapping the paddle's NFC sticker opens `/seat/<alias>` in the phone's browser, which has its own **phone wallet** (a Sepolia key kept in that browser); one tap links it to the paddle, and **after the hammer it pays the seller automatically**. MetaMask is a fallback (unreliable on phones, Sat 7 Nov ~06:20). The rate is **0 ETH per credit** (only gas), editable on `/admin`. If the winner doesn't pay within 10 min (or has no wallet, or the lot has no seller wallet), **the lot stays with the seller**. Paddles without a wallet can still bid. Off unless the engine has `PAYMENTS=1` (Kev, Sat 7 Nov ~04:30) | engine `payments.py`, `web/src/lib/payments*.ts` |
 | Step | **+5% per bid** (500 bps), configurable per auction | rules |
 | Countdown | V6 hardware rounds use 10 s via published countdownMs=10000; unchanged engine seed defaults to 5 s unless SEED_COUNTDOWN_MS=10000 | auction rules / engine env |
 | Stale presses | A press whose `stateVersion` predates the latest bid is refused as `STALE` | engine + firmware |
@@ -46,6 +46,7 @@ bridge/         Laptop program: gateway USB serial <-> engine WebSocket (+ fake 
 arkiv-worker/   Drains the engine outbox into Arkiv entities with the publisher wallet
 arkiv/          Arkiv prize write-ups (schema.md done; friction, reach, why-arkiv, how-you-use-arkiv to do)
 firmware/       V6 Arduino tag/gateway sources, wiring/protocol docs and hardware validation (firmware branch)
+backend/        Standalone deploy (Render): Dockerfile built from the repo root that runs engine/ (+ optional arkiv-worker/); no code of its own
 PROJECT_LOG.md  This file
 AGENTS.md       Pointer for AI tools: read this log first
 ```
@@ -95,7 +96,7 @@ Checks that catch drift:
 
 **Admin page:** needs two **server** env vars in Vercel, both type Secret and without the `NEXT_PUBLIC_` prefix: `ADMIN_TOKEN` (the same value as in `engine/.env`) and `ADMIN_PASSWORD` (Kev's choice). The browser sends the password to `/api/admin/*`; the server calls the engine through the tunnel with the token. The demo catalogue is `npm run seed-catalogue` in `arkiv-worker` (six items, lots 11–16, `bid3-cat-NN`; safe to rerun).
 
-**Payments on Sepolia:** add `PAYMENTS=1` to `engine/.env`, then restart the **engine and the worker together** (an older worker can't write `AuctionSettlement` and would hold up the outbox). No new Vercel env vars: the payment routes use `ADMIN_TOKEN`; `SEPOLIA_RPC_URL` is optional. Write `https://metamask.app.link/dapp/bid3.vercel.app/seat/K7` (and `…/M4`) onto each paddle's NFC sticker so the tap opens the seat page inside MetaMask. Each bidder's wallet needs a little Sepolia ETH for gas. Lots pay the listing's seller wallet (the demo catalogue's is the publisher wallet); only lots started from `/admin` after this change carry it, so lots from `new-lot.sh`/`auto-rounds.sh` end UNPAID.
+**Payments on Sepolia:** add `PAYMENTS=1` to `engine/.env`, then restart the **engine and the worker together** (an older worker can't write `AuctionSettlement` and would hold up the outbox). No new Vercel env vars: the payment routes use `ADMIN_TOKEN`; `SEPOLIA_RPC_URL` is optional. Write `https://bid3.vercel.app/seat/K7` (and `…/M4`) onto each paddle's NFC sticker: the tap opens the seat page in the phone's normal browser. Each phone's wallet (address shown on the seat page, with a Copy button) needs a little Sepolia ETH for gas, sent once from any wallet or the faucet. The same browser keeps the same wallet; another browser or cleared site data makes a new one. Lots pay the listing's seller wallet (the demo catalogue's is the publisher wallet); only lots started from `/admin` after this change carry it, so lots from `new-lot.sh`/`auto-rounds.sh` end UNPAID.
 
 **Tunnel:** `scripts/tunnel.sh` runs `cloudflared` in the background, outside any terminal (log: `~/Library/Logs/bid3-tunnel.log`).
 - Closing terminals or restarting the engine, worker or bridge doesn't change its URL. Only a reboot or `scripts/tunnel.sh stop` does.
@@ -162,6 +163,75 @@ With no env, the web app runs a labelled in-browser simulation and bundled sampl
 ---
 
 ## Changelog
+
+### 2026-11-07 ~06:50 IST: "No bidding is going on right now" instead of an old lot
+- **Ask (Kev):** with no auction running, the watch room showed the previous lot's data. It should say no bidding is going on.
+- **Cause:** every "Live room" link went to `/room/<engine's activeAuctionId>`. The engine keeps the last-opened lot as active after it closes, and after a restart there's none, so the site fell back to the build-time `bid3-003`.
+- **Change (web only):**
+  - New `/room` page (`app/room/page.tsx`, `live-room.tsx`) behind the header, home-page and paddle-page links.
+    - It shows the lot open right now (`lib/use-live-lot.ts`: a lot counts as live only in LOBBY/OPEN/COUNTDOWN/PAUSED, from `GET /auctions`).
+    - With none open it shows "No bidding is going on right now" (or "Room offline" when the engine can't be reached), with links to Lots and Results. It switches to the next lot by itself when bidding opens.
+    - A lot that was on screen stays through the hammer (result and payment), then follows the next one. The address bar stays `/room`.
+  - `/room/<lot>` (from Results, bid history and lot cards) still shows that lot. A closed one now says "Bidding on this lot has ended. No bidding is going on right now", with a link to the Live room.
+  - Paddle page: with no lot in the engine it says "No bidding is going on right now" instead of showing `bid3-003`. A lot that just closed stays, so the winner sees "You won" and the payment, plus a note that bidding has ended. "Open the big screen" goes to `/room`, which also removes the old hydration warning on that link.
+- **Tested** in headless Chrome against a scratch engine, every case as expected:
+  - `/room` with nothing running shows the idle message, and the header link is `/room`.
+  - A lot opened while the page was open showed without a refresh.
+  - After the hammer the result stayed, with the "no bidding" note.
+  - Reloading `/room` afterwards shows the idle message.
+  - `/room/<closed lot>` shows the note.
+  - The paddle page shows the ended note on a closed lot, and "No bidding is going on right now" with an empty engine.
+  - The next lot opening on `/room` was followed.
+  - No page exceptions; `tsc`, `eslint` and `next build` clean.
+
+### 2026-11-07 ~06:35 IST: standalone backend for Render (`backend/`)
+- **Ask (Kev):** the judges need a standalone hosted backend, and Kev plans to use Render. Everything else must keep working as it is.
+- **New `backend/`, deployment files only:**
+  - `Dockerfile`: built from the repo root; it copies `engine/` and `arkiv-worker/` as they are. There's one copy of the code, so section 4 can't drift.
+  - `start.sh`, `render.yaml` (Blueprint path `backend/render.yaml`), `.env.example`, `Dockerfile.dockerignore`, `.gitignore`.
+  - `README.md`: deploy steps, env vars, limits.
+- **Behaviour:**
+  - The engine always runs.
+  - The Arkiv worker runs in the same container only when `ARKIV_PRIVATE_KEY` is set.
+  - It refuses the laptop's publisher key (`0xCf11…e32d`). Two workers on one key would race for nonces and put Render's test lots among the live site's verified results.
+  - `REQUIRE_TOKENS=1` comes from the image env, so `config.py` (whose default only detects Railway) is unchanged.
+- **Nothing existing changed** except this log (one line in section 3). Vercel stays pointed at the laptop, so the live path is untouched.
+- **Tested locally in Docker** (port 8097; the live engine on 8010 was left alone and still answers):
+  - The image builds and contains no `.env`. With no tokens, the engine refuses to start.
+  - With tokens: `/health` and `/auctions` answer (seeded `bid3-003`); the CORS preflight passes for `bid3.vercel.app`; `/outbox` gives 401 without the token and 200 with it.
+  - The keyboard bridge connected over WS (token redacted in the logs) and ran a round: 2 bids, M4 leading, COUNTDOWN.
+  - The worker ran with a throwaway unfunded key and an empty outbox, and polled the in-container engine. Nothing was written to Arkiv.
+  - The publisher-key guard and an invalid key both leave the worker off and the engine up.
+  - Engine `pytest`: 60 passed. `check-schemas`: match.
+- **Not tested:** a real Render deploy (the Blueprint path, the build on Render, the free plan's spin-down), and the worker writing to Arkiv from the container.
+- **Open:**
+  - Kev: create the Render service and set the env vars.
+  - Optionally put the Render URL in the root README for the judges.
+  - The free plan sleeps after 15 min and wipes SQLite on every restart (why the ~22:15 entry moved hosting to the laptop).
+
+### 2026-11-07 ~06:30 IST: phone wallet on the seat page (MetaMask out of the bidder's path)
+- **Seen (Kev, two phones, after a full restart):** in MetaMask's mobile browser, linking failed at once on one phone ("must provide an Ethereum address", -32602) and with "Load failed" after 16 s on the other.
+  - The server side was healthy: the tunnel answered in ~0.5 s, `/api/bind` in ~1 s, and K7 had linked at 06:12:50.
+  - So these failures happen inside MetaMask Mobile, on top of the Pay now failure at ~06:00.
+- **Change:** the seat page now has its own Sepolia wallet (`web/src/lib/phone-wallet.ts`), created in the phone's browser on the first visit and kept in `localStorage`.
+  - "Link this phone to Paddle X" signs locally and posts to the same `/api/bind`.
+  - When the paddle wins, the page **pays by itself** (same transaction shape, so `/api/pay` and the engine are unchanged).
+  - The panel shows the wallet's address, balance and a Copy button, and asks for Sepolia ETH when it's empty.
+  - MetaMask stays as a fallback ("Use the wallet app in this browser instead", and "Pay with MetaMask" for a payment linked to another wallet).
+- **Hardening:**
+  - Site calls retry a dropped connection three times.
+  - The payment is signed and stored before it's broadcast. A retry or reload rebroadcasts the same signed transaction (same nonce, so it can only be included once) or confirms it's already on Sepolia. A transaction Sepolia refuses is dropped and re-signed.
+  - It's attempted automatically once per lot per page load; "Pay now" retries by hand.
+  - Every step goes into the "What happened, step by step" trace.
+- **Sticker URL:** now `https://bid3.vercel.app/seat/<alias>`, the plain site, instead of the MetaMask link.
+- **Tested in headless Chrome** (phone size, scratch engine, copy of the site):
+  - The first visit created a wallet and showed its 0 ETH balance.
+  - The link button bound that exact address in the engine through `/api/bind`.
+  - A one-paddle round sold, and the payment became DUE from that address.
+  - The page tried to pay by itself and stopped with "needs Sepolia ETH" and the trace.
+  - A reload kept the same wallet, and there were no page exceptions. `tsc`, `eslint` and `next build` clean.
+- **Not tested:** the broadcast with real Sepolia ETH (no funded key here). The first funded run on a phone is the real test.
+- **Trade-off:** the key lives in the browser (fine for a testnet demo). Clearing site data loses the wallet and its Sepolia ETH, and Safari, Chrome and MetaMask's browser each get their own wallet.
 
 ### 2026-11-07 ~06:05 IST: fix "must provide an Ethereum address" on Pay now (MetaMask Mobile)
 - **Seen (Kev, on a phone):** linking M4 worked (wallet `0x5e33…31ca`). Pay now failed with MetaMask's "Invalid parameters: must provide an Ethereum address." The engine had the payment DUE; `/api/pay` was never called and the wallet has sent no transactions on Sepolia.

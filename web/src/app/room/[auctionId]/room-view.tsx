@@ -19,7 +19,8 @@ import { SimulationControls } from "./simulation-controls";
 
 const CLOSED_PHASES: ReadonlySet<Phase> = new Set<Phase>(["SOLD_LOCKED", "UNSOLD", "CANCELLED"]);
 
-export function RoomView({ auctionId: requestedId }: { auctionId: string }) {
+/** `syncUrl` keeps the address bar on /room/<lot>; the Live room (/room) turns it off so it stays /room. */
+export function RoomView({ auctionId: requestedId, syncUrl = true }: { auctionId: string; syncUrl?: boolean }) {
   // The lot this room follows. It starts as the one in the URL. If this page watched that lot live
   // and the engine opens a new one after it closes, the room moves to the new lot in place, without
   // a page navigation, so a big screen (even in full screen) keeps up without anyone touching it.
@@ -51,11 +52,12 @@ export function RoomView({ auctionId: requestedId }: { auctionId: string }) {
   if (newerLot && watchedLive) setAuctionId(newerLot);
 
   useEffect(() => {
+    if (!syncUrl) return;
     // Keep the address bar on the lot being followed. The native history API updates the URL
     // without a navigation, so the room isn't remounted and full screen survives.
     const path = `/room/${encodeURIComponent(auctionId)}`;
     if (window.location.pathname !== path) window.history.replaceState(null, "", path);
-  }, [auctionId]);
+  }, [auctionId, syncUrl]);
 
   const stageRef = useRef<HTMLDivElement>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -175,6 +177,25 @@ export function RoomView({ auctionId: requestedId }: { auctionId: string }) {
             <Link href={`/room/${encodeURIComponent(newerLot)}`} className="mt-0.5 inline-block font-semibold text-cobalt hover:underline">
               Go to the live room
             </Link>
+          </div>
+        ) : null}
+
+        {closed && !newerLot ? (
+          <div className="mt-8 rounded-panel border border-line bg-surface-2 px-4 py-3 text-sm" role="status">
+            <p className="font-semibold">Bidding on this lot has ended. No bidding is going on right now.</p>
+            <p className="mt-0.5 text-ink-2">
+              {watchedLive ? (
+                "The next lot appears here as soon as the auctioneer opens bidding."
+              ) : (
+                <>
+                  The{" "}
+                  <Link href="/room" className="font-semibold text-cobalt hover:underline">
+                    Live room
+                  </Link>{" "}
+                  shows the next lot as soon as the auctioneer opens bidding.
+                </>
+              )}
+            </p>
           </div>
         ) : null}
 

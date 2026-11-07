@@ -5,9 +5,8 @@ import { useFeaturedAuctionId } from "@/lib/use-featured-auction";
 import { LiveLotCard } from "./live-lot-card";
 
 export function FeaturedRoomButton() {
-  const id = useFeaturedAuctionId();
   return (
-    <ButtonLink href={`/room/${id}`} size="lg">
+    <ButtonLink href="/room" size="lg">
       Watch the live room
     </ButtonLink>
   );
