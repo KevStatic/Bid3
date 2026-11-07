@@ -65,6 +65,8 @@ export function SeatWallet({ alias }: { alias: string }) {
   const linkedHere = !!phone && binding?.wallet.toLowerCase() === phone;
   const owed = (payments.data ?? []).filter((p) => p.winnerAlias === alias && p.status === "DUE");
   const dueHere = owed.find((p) => !!phone && p.payer?.toLowerCase() === phone);
+  // Pay only once there's gas: the laptop's gas station tops linked wallets up within ~30 s.
+  const funded = !!dueHere && balance.data !== undefined && balance.data > BigInt(dueHere.amountWei);
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: ["engine"] });
     void queryClient.invalidateQueries({ queryKey: ["sepolia"] });
@@ -99,11 +101,11 @@ export function SeatWallet({ alias }: { alias: string }) {
   });
   const dueId = dueHere?.auctionId;
   useEffect(() => {
-    if (!dueHere) return;
+    if (!dueHere || !funded) return;
     const timer = setTimeout(() => autoPay(dueHere), 300);
     return () => clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- run once per lot that becomes due here
-  }, [dueId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- run once per lot that becomes due here and has gas
+  }, [dueId, funded]);
 
   if (!settings.data?.enabled) return null;
 
@@ -140,9 +142,12 @@ export function SeatWallet({ alias }: { alias: string }) {
           </div>
           {empty ? (
             <p className="mt-2 text-sm text-ink-2">
-              It needs a little Sepolia ETH for gas (0.01 is plenty). Send some to this address from any wallet, or use the{" "}
+              {linkedHere
+                ? "No Sepolia ETH yet. Bid3 sends it a little for gas automatically, within about 30 seconds."
+                : "No Sepolia ETH yet. Once it's linked to a paddle, Bid3 sends it a little for gas automatically."}{" "}
+              If it stays at 0, send some from any wallet or the{" "}
               <a className={link} href={SEPOLIA_FAUCET} target="_blank" rel="noreferrer">
-                free faucet
+                faucet
               </a>
               .
             </p>
@@ -185,6 +190,7 @@ export function SeatWallet({ alias }: { alias: string }) {
           payment={p}
           phone={phone}
           busy={busy}
+          funded={balance.data !== undefined && balance.data > BigInt(p.amountWei)}
           onPayHere={() => payHere(p)}
           onPayMetaMask={
             browserWallet
@@ -241,12 +247,14 @@ function OwedPayment({
   payment,
   phone,
   busy,
+  funded,
   onPayHere,
   onPayMetaMask,
 }: {
   payment: Payment;
   phone: string | null;
   busy: string | null;
+  funded: boolean;
   onPayHere: () => void;
   onPayMetaMask: (() => void) | null;
 }) {
@@ -266,7 +274,9 @@ function OwedPayment({
             ? "Paying from this phone now…"
             : signed
               ? "Sent from this phone. Waiting for the site to confirm it."
-              : "This phone pays it automatically."
+              : funded
+                ? "This phone pays it automatically."
+                : "This phone pays it as soon as it has gas (Bid3 is topping it up)."
           : payment.payer
             ? `It's paid from ${shortAddress(payment.payer)}.`
             : "Link a wallet above and it pays straight away."}{" "}

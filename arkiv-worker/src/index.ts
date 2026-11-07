@@ -7,6 +7,7 @@
  * and the room shows "publication pending".
  */
 import { config, isDryRun } from "./config.ts";
+import { startGasStation } from "./gas-station.ts";
 import { createWriter, type OutboxItem, type Written } from "./writer.ts";
 
 const headers = { Authorization: `Bearer ${config.workerToken}`, "Content-Type": "application/json" };
@@ -26,6 +27,8 @@ async function main() {
       ? "DRY RUN: no ARKIV_PRIVATE_KEY, so nothing is written to Arkiv."
       : `Writing to Arkiv as ${writer!.owner}. Put this address in the web app's NEXT_PUBLIC_PUBLISHER_ADDRESS.`,
   );
+
+  startGasStation(log);
 
   let failures = 0;
   for (;;) {

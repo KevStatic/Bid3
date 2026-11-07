@@ -165,6 +165,23 @@ With no env, the web app runs a labelled in-browser simulation and bundled sampl
 
 ## Changelog
 
+### 2026-11-07 ~08:00 IST: why paddle payments never went through, and an automatic gas top-up
+- **Seen (Kev):** M4 linked to `0x2787…6a05`, "an address none of our wallets have"; "the NFC connections aren't happening properly".
+- **Found:**
+  - `0x2787…` is the **phone wallet** the seat page created in that phone's browser (linked 07:19). Every phone browser makes its own, so Safari, Chrome and MetaMask's browser each get a different one.
+  - **Every payment so far failed for one reason: the paying wallet had 0 Sepolia ETH for gas.** `bid3-cat-16` (M4, `0x5e33…`), `bid3-cat-14` (K7, `0xec86…`), and `bid3-cat-15` (M4, `0x2787…`, window closed 07:54).
+- **New `arkiv-worker/src/gas-station.ts`:**
+  - Runs every 5 s beside the outbox loop and never touches it.
+  - Reads `GET /bindings` and sends 0.005 Sepolia ETH to any linked wallet below 0.002, from a testnet gas wallet.
+  - Waits 3 min between top-ups of the same wallet, caps at 12 per hour, and warns once a minute when it's low.
+  - Off without `GAS_STATION_KEY`. A key was generated straight into `arkiv-worker/.env` (git-ignored, never printed); address `0xb5Cf3F8e56Cc2dd2fBCe9E7baDaFff39E4065515`. **Kev funds it once** (e.g. 0.1 Sepolia ETH from MetaMask).
+- **Seat page:** the automatic payment now waits until the wallet has gas, then pays (it used to try once and fail). The wording says Bid3 tops the wallet up automatically, instead of asking for Sepolia ETH by hand.
+- **Tested:**
+  - Worker and web `tsc` and `eslint` clean.
+  - Gas station run against the live engine: it read the bindings, found M4's empty wallet, and stopped at "gas station is low" (unfunded), without sending.
+  - Not yet tested with real funds: the first funded run sends the first top-up.
+- **NFC checklist** (the tap only opens a URL): sticker = an NDEF **URL** record `https://bid3.vercel.app/seat/K7` (NFC Tools: Write, Add a record, URL). iPhone: screen on and unlocked, top edge to the sticker, tap the banner. Android: NFC on, back of the phone. Keep the sticker off metal and the board's battery. Use the same browser on each phone, or the wallet changes. Typing `bid3.vercel.app/seat/K7` works as a fallback.
+
 ### 2026-11-07 ~07:45 IST: gateway "Down": USB drop-outs, and a bridge launcher that follows the port
 - **Seen (Kev):** the room showed Gateway Down (bridge and engine OK) on every test run.
 - **Found:**
