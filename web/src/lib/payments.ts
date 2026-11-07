@@ -87,6 +87,12 @@ const note = (step: string) => {
   console.info("[bid3 payment]", line);
 };
 export const paymentTrace = () => [...trace];
+/** For the phone wallet (phone-wallet.ts): start a new trace, and add a step to it. */
+export const traceReset = (first: string) => {
+  trace.length = 0;
+  note(first);
+};
+export const traceStep = (step: string) => note(step);
 
 function friendly(error: unknown): Error {
   const text = `${(error as { message?: string })?.message ?? error}`;

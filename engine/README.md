@@ -79,9 +79,9 @@ The most recently opened auction is the one the gateway's presses go to. Opening
 
 `bid3_engine/payments.py`, kept apart from `auction.py`: it never changes who can bid or who wins.
 
-- A bidder taps a paddle's NFC sticker, which opens `/seat/<alias>`, and links their wallet by signing a message. The website checks the signature and calls `POST /bindings`.
+- A bidder taps a paddle's NFC sticker, which opens `/seat/<alias>`. The page's own phone wallet (or MetaMask) signs a link message; the website checks the signature and calls `POST /bindings`.
 - When a lot sells, a payment is **DUE**: the winner's linked wallet pays the seller's wallet `PAYMENT_WEI_PER_CREDIT` wei per 1.00 credit of the hammer price. The default is 0, so it's a 0 ETH transaction and only gas is spent. The admin page can change the rate at any time; each payment keeps the rate it was due at.
-- The winner pays from their phone. The website checks the Sepolia transaction (mined, from the payer, to the seller, enough value, memo `bid3:<auctionId>`), then calls `POST /auctions/{id}/payment/paid`. The engine re-checks it and marks it **PAID**.
+- The winner's phone pays automatically at the hammer. The website checks the Sepolia transaction (mined, from the payer, to the seller, enough value, memo `bid3:<auctionId>`), then calls `POST /auctions/{id}/payment/paid`. The engine re-checks it and marks it **PAID**.
 - With no payment within `PAYMENT_WINDOW_MS` (10 min), or with no seller wallet on the lot, it's **UNPAID** and the lot stays with the seller.
 - A paddle's wallet can't change once it has bid on the live lot, or while it owes a payment. A paddle with no wallet can bid as before, and can still link one after winning.
 - PAID and UNPAID queue an `AuctionSettlement` record for Arkiv. Restart the worker with the engine when you switch this on.
