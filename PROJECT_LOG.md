@@ -165,6 +165,16 @@ With no env, the web app runs a labelled in-browser simulation and bundled sampl
 
 ## Changelog
 
+### 2026-11-07 ~08:40 IST: admin can link a paddle to a real account
+- **Seen (Kev, Etherscan):** M4's payment came from `0x2787…`, the phone wallet a phone's browser created, and went to the seller `0x37f0…`. That payment is PAID (`bid3-mw5szzvnc0kg`, tx `0xfea124…`), so the flow works. Kev wants payments to come from the team's 3 real MetaMask accounts.
+- **Change:** `/admin` → Payments → Paddle wallets has a "Link a real account" field per paddle (`/api/admin/bind` → engine `POST /bindings`, no signature, admin password only). The engine still refuses while that paddle has bid on the live lot or owes a payment. The winner pays from that account with **Pay with MetaMask** on `/seat/<alias>`, in a browser whose MetaMask has that account selected (desktop Chrome is the reliable one).
+- **Tested:** `tsc`, `eslint`, `next build` clean. The route follows the existing admin routes; the engine side is covered by `tests/test_payments.py`.
+
+### 2026-11-07 ~08:25 IST: 20 new demo lots; finished catalogue lots removed
+- **Ask (Kev):** about 20 new demo items for the auctioneer, and delete 5–7 old ones.
+- **Deleted** (publisher-owned, all finished: cancelled, unsold or sold): Lots 11–16 (`bid3-cat-11`…`16`). Their results and bids stay on Arkiv and in Results. Kept Lot 04 (the README's verified hardware round). Lots 17–20 belong to teammates' wallets (`0x76EE…`, `0x8cDf…`, `0x37f0…`), so only those wallets can delete them.
+- **New `arkiv-worker/src/seed-demo-lots.ts`** (`npm run seed-demo-lots`): 20 varied items, Lots 21–40, `bid3-demo-NN`, `item-NN`, opening bids 20–250 credits, listed for 7 days. Owned by the publisher, so their payments go to `0xCf11…`. Skips items already listed. Ran once: all 20 written.
+
 ### 2026-11-07 ~08:00 IST: why paddle payments never went through, and an automatic gas top-up
 - **Seen (Kev):** M4 linked to `0x2787…6a05`, "an address none of our wallets have"; "the NFC connections aren't happening properly".
 - **Found:**

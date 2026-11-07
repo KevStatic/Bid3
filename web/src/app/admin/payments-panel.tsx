@@ -21,6 +21,7 @@ export function PaymentsPanel({ password, onFailure }: { password: string; onFai
   const [draft, setDraft] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
+  const [linkTo, setLinkTo] = useState<Record<string, string>>({});
   const rateId = useId();
 
   if (!settings.data) return null; // engine unreachable, or older than payments
@@ -37,6 +38,15 @@ export function PaymentsPanel({ password, onFailure }: { password: string; onFai
     if (!reply.ok) return onFailure(reply);
     setDraft(null);
     setSaved(`Saved: ${draft} ETH per credit, for lots that sell from now on.`);
+    refresh();
+  };
+
+  const onLink = async (alias: string) => {
+    setBusy(`link:${alias}`);
+    const reply = await adminPost("/api/admin/bind", password, { alias, wallet: linkTo[alias] ?? "" });
+    setBusy(null);
+    if (!reply.ok) return onFailure(reply);
+    setLinkTo({ ...linkTo, [alias]: "" });
     refresh();
   };
 
@@ -110,6 +120,24 @@ export function PaymentsPanel({ password, onFailure }: { password: string; onFai
                   {busy === alias ? "Unlinking…" : "Unlink"}
                 </Button>
               ) : null}
+              <form
+                className="flex w-full gap-2"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void onLink(alias);
+                }}
+              >
+                <input
+                  aria-label={`Wallet address for Paddle ${alias}`}
+                  placeholder="Link a real account: paste its 0x… address"
+                  value={linkTo[alias] ?? ""}
+                  onChange={(e) => setLinkTo({ ...linkTo, [alias]: e.target.value })}
+                  className="tabular h-9 min-w-0 flex-1 rounded-lg border border-line bg-surface-2 px-3 text-sm text-ink placeholder:text-ink-3 focus:border-cobalt focus:outline-none"
+                />
+                <Button type="submit" variant="outline" size="sm" disabled={busy !== null || !!binding?.locked || !(linkTo[alias] ?? "").trim()}>
+                  {busy === `link:${alias}` ? "Linking…" : "Link"}
+                </Button>
+              </form>
             </li>
           );
         })}

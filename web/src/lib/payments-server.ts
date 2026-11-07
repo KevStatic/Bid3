@@ -86,3 +86,17 @@ export async function clearBinding(body: unknown): Promise<void> {
   if (!PADDLE_ROSTER.some((seat) => seat.alias === alias)) throw new AdminError(400, "There's no paddle with that name.");
   await engine(`/bindings/${encodeURIComponent(alias)}/clear`, "POST");
 }
+
+/**
+ * Admin: link a paddle to a wallet address directly (e.g. one of the team's MetaMask accounts), with no
+ * signature. The winner then pays from that account with "Pay with MetaMask". The engine still refuses
+ * while the paddle has bid on the live lot or owes a payment.
+ */
+export async function adminLinkWallet(body: unknown): Promise<void> {
+  const b = (body ?? {}) as Record<string, unknown>;
+  const alias = typeof b.alias === "string" ? b.alias.toUpperCase() : "";
+  const wallet = typeof b.wallet === "string" ? b.wallet.trim() : "";
+  if (!PADDLE_ROSTER.some((seat) => seat.alias === alias)) throw new AdminError(400, "There's no paddle with that name.");
+  if (!isAddress(wallet)) throw new AdminError(400, "That isn't a wallet address (0x followed by 40 characters).");
+  await engine("/bindings", "POST", { alias, wallet: wallet.toLowerCase() });
+}
