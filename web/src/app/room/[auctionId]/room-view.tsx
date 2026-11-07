@@ -9,6 +9,7 @@ import { PaddleRoster } from "@/components/auction/paddle-roster";
 import { PaymentStatus } from "@/components/auction/payment-status";
 import { phaseHeadline, priceLabel } from "@/components/auction/phase-copy";
 import { PriceDisplay } from "@/components/auction/price-display";
+import { SoldCelebration, useRoomSound, useSoundPrimer } from "@/components/auction/sold-celebration";
 import { Button, Container, LotTag, Panel, Skeleton, SourceBadge } from "@/components/ui";
 import { formatMinor, percentFromBps, secondsLabel } from "@/lib/format";
 import type { Phase } from "@/lib/types";
@@ -18,6 +19,7 @@ import { useEngineHealth } from "@/lib/use-featured-auction";
 import { SimulationControls } from "./simulation-controls";
 
 const CLOSED_PHASES: ReadonlySet<Phase> = new Set<Phase>(["SOLD_LOCKED", "UNSOLD", "CANCELLED"]);
+const LIVE_PHASES: ReadonlySet<Phase> = new Set<Phase>(["LOBBY", "OPEN", "COUNTDOWN", "PAUSED"]);
 
 /** `syncUrl` keeps the address bar on /room/<lot>; the Live room (/room) turns it off so it stays /room. */
 export function RoomView({ auctionId: requestedId, syncUrl = true }: { auctionId: string; syncUrl?: boolean }) {
@@ -73,6 +75,14 @@ export function RoomView({ auctionId: requestedId, syncUrl = true }: { auctionId
     else void stageRef.current?.requestFullscreen();
   }, []);
 
+  // The "Sold!" celebration plays only for a sale this screen watched happen, never for a lot that was
+  // already over when the page opened (from Results, or after a reload).
+  const [liveSeenFor, setLiveSeenFor] = useState<string | null>(null);
+  if (state && LIVE_PHASES.has(state.phase) && liveSeenFor !== state.auctionId) setLiveSeenFor(state.auctionId);
+  const celebrate = state?.phase === "SOLD_LOCKED" && state.result && liveSeenFor === state.auctionId ? state.result : null;
+  const [soundOn, setSoundOn] = useRoomSound();
+  useSoundPrimer();
+
   if (!state) {
     return (
       <Container className="py-8">
@@ -98,6 +108,15 @@ export function RoomView({ auctionId: requestedId, syncUrl = true }: { auctionId
           {lot ? <span className="text-ink-2">{lot.category}</span> : null}
           <div className="ml-auto flex items-center gap-2">
             <SourceBadge source={source} />
+            <Button
+              variant="quiet"
+              size="sm"
+              onClick={() => setSoundOn(!soundOn)}
+              aria-pressed={soundOn}
+              title="Plays a short “Sold!” when a paddle wins. Browsers allow sound once you've clicked this page."
+            >
+              {soundOn ? "Sound on" : "Sound off"}
+            </Button>
             <Button variant="quiet" size="sm" className="hidden sm:inline-flex" onClick={toggleFullscreen} aria-pressed={isFullscreen}>
               {isFullscreen ? "Exit full screen" : "Full screen"}
             </Button>
@@ -212,6 +231,17 @@ export function RoomView({ auctionId: requestedId, syncUrl = true }: { auctionId
               <p className="mt-0.5 text-ink-2">Live bidding is paused until the stream returns.</p>
             )}
           </div>
+        ) : null}
+
+        {/* Inside the stage, so it also shows in full screen. */}
+        {celebrate ? (
+          <SoldCelebration
+            key={shownId}
+            winnerAlias={celebrate.winnerAlias}
+            priceMinor={celebrate.hammerPriceMinor}
+            unit={state.rules.unit}
+            sound={soundOn}
+          />
         ) : null}
       </div>
 

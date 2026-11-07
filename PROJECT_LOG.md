@@ -29,9 +29,9 @@ A live auction run with physical paddle tags, built for **ETHGlobal Mumbai (Nov 
 | Step | **+5% per bid** (500 bps), configurable per auction | rules |
 | Countdown | V6 hardware rounds use 10 s via published countdownMs=10000; unchanged engine seed defaults to 5 s unless SEED_COUNTDOWN_MS=10000 | auction rules / engine env |
 | Stale presses | A press whose `stateVersion` predates the latest bid is refused as `STALE` | engine + firmware |
-| Frontend | Next.js 16. **Runs on Kev's laptop** (`npm run build && npm start`), public on Kev's own domain through a named Cloudflare tunnel (`scripts/site-tunnel.sh`). `bid3.vercel.app` stays as a **read-only view**: the engine's `ADMIN_TOKEN` was rotated, so it can't link, sell, run lots or confirm payments (Kev, Sat 7 Nov ~09:30, after submissions closed) | `web/`, `scripts/site-tunnel.sh` |
+| Frontend | Next.js 16. **`bid3.vercel.app` is the full app again** (Kev, Sat 7 Nov ~11:00, for the final showing): Vercel has the current `ADMIN_TOKEN` and `NEXT_PUBLIC_ENGINE_WS_URL=wss://<engine quick tunnel>`. The laptop build (`npm run build && npm start`, `scripts/site-tunnel.sh`) remains a fallback (~09:30–11:00 it was the main site and Vercel was read-only) | `web/`, `scripts/tunnel.sh` |
 | Backend | FastAPI engine + Python bridge on the laptop + TypeScript Arkiv worker | `engine/`, `bridge/`, `arkiv-worker/` |
-| Hosting | Everything on Kev's laptop: engine, worker, bridge and the website. Phones reach the site (and the engine, at `/engine` on the site) through the named tunnel on Kev's domain. The quick tunnel (`scripts/tunnel.sh`) only keeps Vercel's read-only view live (Sat 7 Nov ~09:30; before that, web on Vercel, from Fri 6 Nov ~22:15) | section 5, changelog "Paddle wallets come only from the phone" |
+| Hosting | Engine, worker and bridge on Kev's laptop; the website on Vercel, reaching the engine through the quick tunnel (`scripts/tunnel.sh`). Render (`backend/`) is not used: it sleeps and loses its data. A new tunnel URL needs Vercel's `NEXT_PUBLIC_ENGINE_WS_URL` updated and a redeploy (Sat 7 Nov ~11:00; ~09:30–11:00 the site also ran on the laptop) | section 5 |
 | Firmware | Arduino C++ for the tags and gateway, on branch **`firmware`** (not on `main`) | `origin/firmware` |
 | Commits | **Only Kev commits.** AI assistants write files but never run `git commit` or `git push` | — |
 
@@ -96,7 +96,7 @@ Checks that catch drift:
 | `worker` | `cd ~/Hackathons/Bid3/arkiv-worker && npm start` | `Writing to Arkiv as 0xCf11CEa33b48A48901DD2a03730524a69E64e32d` |
 | `bridge` | `~/Hackathons/Bid3/scripts/bridge.sh` (waits for the gateway on USB, starts the bridge on whatever port name it gets, and follows it if it comes back under another name) | `/health` shows `bridgeConnected: true` |
 | `site` | `cd ~/Hackathons/Bid3/web && npm run build && npm start` (rebuild after changing `web/.env.local` or code) | `Ready` on `http://localhost:3000` |
-| `ops` | `~/Hackathons/Bid3/scripts/site-tunnel.sh quick` (phones, today: prints the sticker URLs) or `~/Hackathons/Bid3/scripts/site-tunnel.sh` (phones, your own domain, once set up), and `~/Hackathons/Bid3/scripts/tunnel.sh` (keeps Vercel's read-only view live). Run lots from **`http://localhost:3000/admin`** or `https://<your-host>/admin`. Fallbacks: `scripts/new-lot.sh` / `scripts/auto-rounds.sh` | both print ✅ |
+| `ops` | `~/Hackathons/Bid3/scripts/tunnel.sh` (the engine's tunnel for Vercel; if it prints ❌ for the site, put the printed `wss://…` in Vercel's `NEXT_PUBLIC_ENGINE_WS_URL` and Redeploy without the build cache). Run lots from **`https://bid3.vercel.app/admin`**. The `site` terminal is needed only for the laptop fallback (`site-tunnel.sh`). Fallbacks: `scripts/new-lot.sh` / `scripts/auto-rounds.sh` | both lines ✅ |
 
 **Admin page:** `web/.env.local` holds `ADMIN_TOKEN` (the same value as in `engine/.env`) and `ADMIN_PASSWORD`, both server-only. The browser sends the password to `/api/admin/*`; the site's server calls the engine at `ENGINE_URL` with the token. Vercel still has the old token, so its admin and payment routes are refused by the engine. The demo catalogue is `npm run seed-catalogue` in `arkiv-worker` (six items, lots 11–16, `bid3-cat-NN`; safe to rerun).
 
@@ -173,6 +173,61 @@ With no env, the web app runs a labelled in-browser simulation and bundled sampl
 ---
 
 ## Changelog
+
+### 2026-11-07 ~13:20 IST: "Sold!" celebration in the live room
+- **Ask (Kev):** when a paddle wins, a party-popper and cheers animation across the screen, plus a short "Sold!" voice.
+- **New `web/src/components/auction/sold-celebration.tsx`:**
+  - A fixed overlay that never takes clicks, ~5.2 s.
+  - 🎉 poppers in both bottom corners fire canvas confetti across the screen (brand colours), with a second volley and a top rain.
+  - A "SOLD!" stamp lands, with a 🥂 pill "Paddle K7 · 105.00 credits".
+  - With sound on: two panned "pops" (Web Audio) and the browser's speech saying "Sold!" (rate 0.7).
+  - Reduced motion: the stamp only, no confetti or bounce. Keyframes in `globals.css` (`sold-*`).
+- **`app/room/[auctionId]/room-view.tsx`** (also used by `/room`):
+  - It fires only when this screen saw the lot live (LOBBY/OPEN/COUNTDOWN/PAUSED) and then SOLD_LOCKED. Opening or reloading an already-sold lot doesn't celebrate. UNSOLD/CANCELLED don't either.
+  - Rendered inside the stage, so it shows in Full screen.
+  - New **Sound on/off** button (remembered per browser, on by default).
+  - Browsers allow sound only after a click or key press on the page; the first one primes audio and speech.
+- **No engine, contract or data changes.**
+- **Tested:**
+  - `tsc`, `eslint`; Vercel-mode `next build` in a scratch copy.
+  - Headless Chrome against a separate test engine (:8097), two lots sold while watched (normal and Full screen):
+    - The overlay appeared with the winner and price; the canvas painted.
+    - `pointer-events: none`, inside the full-screen element in Full screen, gone after ~6 s.
+    - `speechSynthesis.speak("Sold!")` was called.
+    - After a reload, the sold lot showed no celebration. No page exceptions.
+    - Screenshots checked.
+  - The live engine was untouched.
+- **Not tested:** how the voice sounds on Kev's Mac or phone (the voice depends on the device).
+
+### 2026-11-07 ~12:55 IST: runbook updated for the Vercel setup
+- Section 2 (Frontend, Hosting) and section 5 (`ops`) now describe the current setup: the full app on `bid3.vercel.app`, and engine, worker and bridge on the laptop behind `scripts/tunnel.sh`. Render isn't used (Kev: it dies and breaks the flow). Docs only.
+
+### 2026-11-07 ~12:45 IST: "External transactions to internal accounts cannot include data" on Pay
+- **Seen (Kev, phone, M4 linked to `0x5e33…31ca`):** paying `bid3-mw62adnjzq2i` failed with `-32602 External transactions to internal accounts cannot include data`. The previous payment (`bid3-demo-27`, 12:20, to the publisher `0xcf11…`) had gone through (PAID).
+- **Cause:** this lot was listed from Kev's **Account 2 `0x8cdf…6b26`**, so it pays that wallet. The phone's MetaMask holds that account too (same recovery phrase). MetaMask's transaction controller (73.x, `validation.js`) refuses any site transaction with data to one of the wallet's own accounts. Every Bid3 payment carries the memo `bid3:<auctionId>` as data, which `/api/pay` requires. Not a site regression.
+- **For the showing:** the paying phone's MetaMask must not contain the seller's account. Use demo lots (seller `0xCf11…`) or a seller wallet from a different recovery phrase.
+- **Possible code fallback (not built; it relaxes payment checks, so it needs Kev's OK):** on this refusal, send without the memo, and have `/api/pay` accept a memo-less transfer mined after the payment was created (the engine already refuses a reused tx hash).
+
+### 2026-11-07 ~12:35 IST: Lot 42 paused mid-bidding ("gateway is down"), and why it didn't resume
+- **Seen (Kev):** during fast bidding on `bid3-mw61tppq67vv` (Powerbank), the room said "Paused… The gateway is down", with both paddles "Signal lost", while Room status showed Gateway/Bridge/Engine OK.
+- **From the engine journal (`data/live.sqlite`, read-only):**
+  - 6 bids from 12:27:31 to 12:27:44.556 (K7 leading at 127.63).
+  - **12:27:46.676 PAUSED** "The gateway is down".
+  - **12:27:46.876** an M4 BID arrived through the gateway and was refused as PAUSED: the gateway was still relaying presses.
+  - Then nothing from the paddles until both were switched off at 12:30:37 (LEAVE ×2 → **RESUMED** COUNTDOWN, K7 leading).
+  - 12:30:40 PAUSED again; at 12:31 the gateway was gone from USB (`/dev/cu.usbserial-10` missing; bridge.sh waiting).
+- **No USB drop or sleep at 12:27** (unified log, `pmset`). The bridge process ran unchanged since 12:04.
+- **Cause, part 1 (false alarm):** the bridge calls the gateway down when no `AUCTION_STATUS_JSON` line arrived for **1.5 s** (`bid3_bridge.py` heartbeat, every ~0.5 s). The gateway prints one every 500 ms from its main loop (`FastGateway.h`), so one >1.5 s stall of that loop trips it. That fits a gateway busy with back-to-back presses. The engine then pauses and marks every ACTIVE paddle UNKNOWN (`set_health`).
+- **Cause, part 2 (stuck):** when status lines resume, the bridge reports "ok" but does **not** send `CMD=STATUS`. It only sends that on a serial reconnect, an engine reconnect or a new lot. So the gateway never re-announces the tags, the paddles stay UNKNOWN, and `can_resume` stays false. The room stays paused until each paddle is switched off/on.
+- **Proposed fix (not made; needs Kev's OK and a bridge restart between lots):** in the bridge heartbeat, send `CMD=STATUS` when health goes down→ok, and raise the 1.5 s limit to ~3 s.
+- **Workaround now:** after a "gateway down" pause with the gateway still plugged in, switch each paddle OFF and ON. The fresh JOIN clears UNKNOWN and the engine resumes on its own.
+
+### 2026-11-07 ~12:10 IST: Cloudflare deleted the engine's quick tunnel; new URL
+- **Seen (Kev):** `bid3.vercel.app/admin`: "This browser can't reach the engine".
+- **Cause:** the quick tunnel `vaccine-furnished-with-boat.trycloudflare.com` (running since Fri 23:56) died at **06:31 UTC / 12:01 IST**. Its log shows `Unauthorized: Tunnel not found`, and the hostname no longer resolves. Cloudflare removed the quick tunnel (they have no uptime guarantee); `cloudflared` retrying can't bring it back. The engine, worker and bridge were fine.
+- **Done:** `scripts/tunnel.sh stop && scripts/tunnel.sh` → **`https://comments-whilst-mercury-positive.trycloudflare.com`**. Checked through it: `/health`; `GET /auctions` with `Origin: https://bid3.vercel.app` (200, CORS header present); the live WebSocket (snapshot received).
+- **Kev:** in Vercel set `NEXT_PUBLIC_ENGINE_WS_URL=wss://comments-whilst-mercury-positive.trycloudflare.com` and Redeploy (`50df8bb`, already pushed). **Done ~12:16:** the live bundle has the new URL and `scripts/tunnel.sh` shows ✅ for both. A run during the build still showed ❌ (old deployment).
+- **Open:** a quick tunnel can vanish again at any time. A named tunnel (`scripts/site-tunnel.sh setup`, or a `cloudflared tunnel` for :8010 on Kev's domain) would keep a fixed URL.
 
 ### 2026-11-07 ~11:30 IST: "must provide an Ethereum address" when linking in MetaMask Mobile
 - **Seen (Kev, MetaMask's browser on the phone, after the deep-link fix):** Link my wallet: network 11155111, account shared `0x5e33…31ca`, then `personal_sign` failed with `-32602 Invalid parameters: must provide an Ethereum address.`
