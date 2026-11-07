@@ -8,6 +8,7 @@
     "start": "tsx --env-file-if-exists=.env src/index.ts",
     "seed-listings": "tsx --env-file-if-exists=.env src/seed-listings.ts",
     "seed-catalogue": "tsx --env-file-if-exists=.env src/seed-catalogue.ts",
+    "seed-demo-lots": "tsx --env-file-if-exists=.env src/seed-demo-lots.ts",
     "query-results": "tsx --env-file-if-exists=.env src/query-results.ts",
     "check-schemas": "node scripts/check-schemas.mjs",
     "typecheck": "tsc --noEmit"
