@@ -11,6 +11,7 @@ import {
   hasBrowserWallet,
   linkMyWallet,
   openInMetaMaskUrl,
+  paymentTrace,
   SEPOLIA_FAUCET,
   sendPayment,
   txUrl,
@@ -38,6 +39,7 @@ export function SeatWallet({ alias }: { alias: string }) {
   const [busy, setBusy] = useState<"link" | "pay" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [sent, setSent] = useState<{ auctionId: string; txHash: string } | null>(null);
+  const [trace, setTrace] = useState<string[]>([]);
 
   if (!settings.data?.enabled) return null;
 
@@ -54,6 +56,7 @@ export function SeatWallet({ alias }: { alias: string }) {
       refresh();
     } catch (e) {
       setError((e as Error).message);
+      setTrace(paymentTrace());
     } finally {
       setBusy(null);
     }
@@ -69,6 +72,7 @@ export function SeatWallet({ alias }: { alias: string }) {
       refresh();
     } catch (e) {
       setError((e as Error).message);
+      setTrace(paymentTrace());
     } finally {
       setBusy(null);
     }
@@ -129,6 +133,12 @@ export function SeatWallet({ alias }: { alias: string }) {
             </a>
           ) : null}
         </p>
+      ) : null}
+      {error && trace.length ? (
+        <details className="mt-2 text-xs text-ink-3">
+          <summary className="cursor-pointer">What happened, step by step</summary>
+          <pre className="mt-2 whitespace-pre-wrap break-all font-mono">{trace.join("\n")}</pre>
+        </details>
       ) : null}
     </section>
   );

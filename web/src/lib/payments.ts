@@ -77,10 +77,27 @@ async function requestAccount(): Promise<Hex> {
   return account;
 }
 
+// ------------------------------------------------------------------ trace
+
+/** Each step of the last link or payment attempt, shown under an error so a failure can be traced from the phone. */
+const trace: string[] = [];
+const note = (step: string) => {
+  const line = `${new Date().toLocaleTimeString("en-GB")} ${step}`;
+  trace.push(line);
+  console.info("[bid3 payment]", line);
+};
+export const paymentTrace = () => [...trace];
+
 function friendly(error: unknown): Error {
   const text = `${(error as { message?: string })?.message ?? error}`;
   const code = (error as { code?: number })?.code;
+  note(`failed: ${code ?? "no code"} ${text}`);
   if (code === 4001 || /user (rejected|denied)|rejected the request/i.test(text)) return new Error("You cancelled in your wallet.");
+  if (/must provide an ethereum address|unauthorized/i.test(text)) {
+    return new Error(
+      "MetaMask hasn't shared this wallet with the site on Sepolia. Tap Pay now again and approve the connection. If it repeats, open MetaMask's connected sites, disconnect bid3.vercel.app, reload this page and pay again.",
+    );
+  }
   if (/insufficient funds|exceeds balance/i.test(text)) {
     return new Error("Your wallet needs a little Sepolia ETH for gas. Get some free from the Sepolia faucet, then pay again.");
   }
@@ -89,6 +106,8 @@ function friendly(error: unknown): Error {
 
 /** Signs the link message (no gas) and asks the site to link this wallet to the paddle. */
 export async function linkMyWallet(alias: string): Promise<string> {
+  trace.length = 0;
+  note(`link Paddle ${alias}`);
   try {
     const p = provider()!;
     const wallet = await requestAccount();
@@ -132,18 +151,33 @@ async function switchToSepolia(p: EIP1193Provider) {
 /** Sends the payment from the winner's wallet to the seller on Sepolia. Returns the transaction hash. */
 export async function sendPayment(payment: Payment): Promise<Hex> {
   try {
+    trace.length = 0;
+    note(`pay ${payment.auctionId}: ${payment.amountWei} wei to ${payment.payee}, due from ${payment.payer}`);
     const p = provider();
     if (!p) throw new Error("No wallet in this browser. Open this page in MetaMask's browser.");
     if (!payment.payer || !payment.payee) throw new Error("Link a wallet to this paddle first.");
+    note(`wallet network before: ${Number.parseInt((await p.request({ method: "eth_chainId" })) as string, 16)}`);
+    // Switch first, then ask for the account. MetaMask Mobile shares accounts with a site per network:
+    // an account shared on another network is refused on Sepolia with "must provide an Ethereum address".
+    await switchToSepolia(p);
+    note(`wallet network now: ${Number.parseInt((await p.request({ method: "eth_chainId" })) as string, 16)}`);
     const account = await requestAccount();
+    note(`account shared on Sepolia: ${account}`);
     if (account.toLowerCase() !== payment.payer.toLowerCase()) {
       throw new Error(`Switch your wallet to ${shortAddress(payment.payer)}, the one linked to Paddle ${payment.winnerAlias}.`);
     }
-    await switchToSepolia(p);
-    return (await p.request({
+    const balance = BigInt((await p.request({ method: "eth_getBalance", params: [account, "latest"] })) as string);
+    note(`Sepolia balance: ${formatEther(balance)} ETH`);
+    if (balance <= BigInt(payment.amountWei)) {
+      throw new Error(`This wallet has no Sepolia ETH for gas. Send a little Sepolia ETH to ${account}, then pay again.`);
+    }
+    note("asking the wallet to send");
+    const hash = (await p.request({
       method: "eth_sendTransaction",
       params: [{ from: account, to: payment.payee as Hex, value: numberToHex(BigInt(payment.amountWei)), data: stringToHex(payment.memo) }],
     })) as Hex;
+    note(`sent ${hash}`);
+    return hash;
   } catch (error) {
     throw friendly(error);
   }
@@ -159,7 +193,11 @@ export async function confirmPayment(auctionId: string, txHash: string): Promise
       body: JSON.stringify({ auctionId, txHash }),
     });
     const data = (await response.json().catch(() => ({}))) as { state?: string; payment?: Payment; error?: string };
-    if (!response.ok) throw new Error(data.error ?? `The site answered ${response.status}.`);
+    if (!response.ok) {
+      note(`site check refused: ${data.error ?? response.status}`);
+      throw new Error(data.error ?? `The site answered ${response.status}.`);
+    }
+    note(`site check: ${data.state}`);
     if (data.payment && data.state !== "pending") return data.payment;
     if (Date.now() > deadline) throw new Error("Sepolia hasn't confirmed the transaction yet. It's sent; check it on Etherscan.");
     await new Promise((r) => setTimeout(r, 4_000));

@@ -163,6 +163,15 @@ With no env, the web app runs a labelled in-browser simulation and bundled sampl
 
 ## Changelog
 
+### 2026-11-07 ~06:05 IST: fix "must provide an Ethereum address" on Pay now (MetaMask Mobile)
+- **Seen (Kev, on a phone):** linking M4 worked (wallet `0x5e33…31ca`). Pay now failed with MetaMask's "Invalid parameters: must provide an Ethereum address." The engine had the payment DUE; `/api/pay` was never called and the wallet has sent no transactions on Sepolia.
+- **Causes:**
+  1. `sendPayment` asked for the account *before* switching to Sepolia. MetaMask Mobile shares accounts with a site per network and gives that misleading error for an account not shared on the current network.
+  2. That wallet has 0 Sepolia ETH, so even a 0 ETH payment can't pay its gas.
+- **Fix (`web/src/lib/payments.ts`):** switch to Sepolia first, then request the account. Check the Sepolia balance before sending, with a clear "no Sepolia ETH for gas" message (and the faucet link). The MetaMask error now maps to an instruction to approve the connection or reconnect the site.
+- **Tracing:** every link or pay attempt records its steps (network before and after, account, balance, send, the site's check). The seat page shows them under an error ("What happened, step by step"), and they're also in the browser console as `[bid3 payment]`.
+- **Tested:** `tsc` and `eslint` clean. Against a fake wallet that shares accounts per network and refuses a send on a network it hasn't shared (the reported error): with no gas it stops with the gas message; with gas it switches, gets the account and sends. Not yet retested on the phone.
+
 ### 2026-11-07 ~04:55 IST: paddle wallets and Sepolia payments
 - **Ask (Kev):** tap a phone on a paddle's NFC tag to link a wallet to that paddle; when the paddle wins, that wallet pays the seller's wallet. Sepolia, 0 ETH (only gas) for now, editable later. Paddles without a wallet still bid. If the winner can't pay, the lot always stays with the seller.
 - **Answer given first:** the paddles have no wallets today. Each has a secp256k1 signing key (Ethereum-style addresses K7 `0x9e10…f0D9`, M4 `0x560A…fe70`), used only to sign presses; nothing was paid before this change.
