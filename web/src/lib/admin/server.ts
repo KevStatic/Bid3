@@ -1,11 +1,19 @@
 /**
  * Server-side helpers for the admin routes (app/api/admin/*). They run only on the server: the
- * engine's ADMIN_TOKEN and the admin page's ADMIN_PASSWORD are plain server env vars on Vercel and
- * never reach a browser. The engine is reached through the same tunnel URL the site already uses.
+ * engine's ADMIN_TOKEN and the admin page's ADMIN_PASSWORD are plain server env vars and never reach
+ * a browser.
  */
 import { createHash, timingSafeEqual } from "node:crypto";
 import { config } from "@/lib/config";
 import { PADDLE_ROSTER } from "./paddles";
+
+/**
+ * Where this server reaches the engine. ENGINE_URL (server-only) is set when the site runs on the same
+ * laptop as the engine (http://localhost:8010); otherwise it's the engine URL the browser uses, when
+ * that is a full URL (on Vercel, the tunnel).
+ */
+const ENGINE_URL =
+  process.env.ENGINE_URL?.replace(/\/+$/, "") || (config.engineHttpUrl?.startsWith("http") ? config.engineHttpUrl : undefined);
 
 const CLOSED_PHASES = new Set(["SOLD_LOCKED", "UNSOLD", "CANCELLED"]);
 
@@ -35,8 +43,8 @@ const digest = (text: string) => createHash("sha256").update(text).digest();
 /** Throws unless the request carries the admin password. */
 export function requireAdmin(request: Request): void {
   const password = process.env.ADMIN_PASSWORD;
-  if (!password || !process.env.ADMIN_TOKEN || !config.engineHttpUrl) {
-    throw new AdminError(503, "The admin page isn't set up yet: add ADMIN_PASSWORD and ADMIN_TOKEN to the Vercel project and redeploy.");
+  if (!password || !process.env.ADMIN_TOKEN || !ENGINE_URL) {
+    throw new AdminError(503, "The admin page isn't set up yet: set ADMIN_PASSWORD, ADMIN_TOKEN and the engine URL for this site, then restart it.");
   }
   if (!timingSafeEqual(digest(request.headers.get("x-admin-password") ?? ""), digest(password))) {
     throw new AdminError(401, "Wrong admin password.");
@@ -45,7 +53,7 @@ export function requireAdmin(request: Request): void {
 
 /** For the public payment routes: they need the engine and its token, but no admin password. */
 export function requireEngine(): void {
-  if (!process.env.ADMIN_TOKEN || !config.engineHttpUrl) {
+  if (!process.env.ADMIN_TOKEN || !ENGINE_URL) {
     throw new AdminError(503, "Payments aren't set up on this site yet (ADMIN_TOKEN or the engine URL is missing).");
   }
 }
@@ -54,7 +62,7 @@ export function requireEngine(): void {
 export async function engine(path: string, method: "GET" | "POST" = "GET", json?: unknown): Promise<Record<string, unknown>> {
   let response: Response;
   try {
-    response = await fetch(`${config.engineHttpUrl}${path}`, {
+    response = await fetch(`${ENGINE_URL}${path}`, {
       method,
       headers: {
         authorization: `Bearer ${process.env.ADMIN_TOKEN}`,
@@ -65,7 +73,7 @@ export async function engine(path: string, method: "GET" | "POST" = "GET", json?
       signal: AbortSignal.timeout(10_000),
     });
   } catch {
-    throw new AdminError(502, "Can't reach the engine. Check the laptop is online and the tunnel is running (scripts/tunnel.sh).");
+    throw new AdminError(502, "Can't reach the engine. Check that it's running on the laptop.");
   }
   const body = (await response.json().catch(() => ({}))) as Record<string, unknown>;
   if (!response.ok) {

@@ -65,9 +65,27 @@ function provider(): EIP1193Provider | null {
 
 export const hasBrowserWallet = () => provider() !== null;
 
-/** Opens this page inside MetaMask's own browser on a phone, where the wallet is available. */
-export const openInMetaMaskUrl = (path: string) =>
-  `https://metamask.app.link/dapp/${typeof window === "undefined" ? "bid3.vercel.app" : window.location.host}${path}`;
+/**
+ * Opens this page inside MetaMask's own browser on a phone, where the wallet is available (browser only).
+ * MetaMask opens the link over https, so this works for the site's public address, not for localhost.
+ */
+export const openInMetaMaskUrl = (path: string) => `https://metamask.app.link/dapp/${window.location.host}${path}`;
+
+/** The account this site can already see in the wallet, without a prompt (null until the user connects). */
+export async function connectedAccount(): Promise<Hex | null> {
+  const p = provider();
+  if (!p) return null;
+  const [first] = (await p.request({ method: "eth_accounts" }).catch(() => [])) as Hex[];
+  return first ? (first.toLowerCase() as Hex) : null;
+}
+
+/** Calls `onChange` when the user switches or disconnects accounts in the wallet. Returns an unsubscribe. */
+export function onAccountsChanged(onChange: () => void): () => void {
+  const p = provider();
+  if (!p?.on) return () => {};
+  p.on("accountsChanged", onChange);
+  return () => p.removeListener?.("accountsChanged", onChange);
+}
 
 async function requestAccount(): Promise<Hex> {
   const p = provider();
@@ -87,7 +105,7 @@ const note = (step: string) => {
   console.info("[bid3 payment]", line);
 };
 export const paymentTrace = () => [...trace];
-/** For the phone wallet (phone-wallet.ts): start a new trace, and add a step to it. */
+/** For other wallet flows (the seller's listing): start a new trace, and add a step to it. */
 export const traceReset = (first: string) => {
   trace.length = 0;
   note(first);
@@ -101,7 +119,7 @@ function friendly(error: unknown): Error {
   if (code === 4001 || /user (rejected|denied)|rejected the request/i.test(text)) return new Error("You cancelled in your wallet.");
   if (/must provide an ethereum address|unauthorized/i.test(text)) {
     return new Error(
-      "MetaMask hasn't shared this wallet with the site on Sepolia. Tap Pay now again and approve the connection. If it repeats, open MetaMask's connected sites, disconnect bid3.vercel.app, reload this page and pay again.",
+      `MetaMask hasn't shared this wallet with the site on Sepolia. Try again and approve the connection. If it repeats, open MetaMask's connected sites, disconnect ${typeof window === "undefined" ? "this site" : window.location.host}, reload this page and try again.`,
     );
   }
   if (/insufficient funds|exceeds balance/i.test(text)) {
@@ -110,21 +128,33 @@ function friendly(error: unknown): Error {
   return error instanceof Error ? error : new Error(text);
 }
 
-/** Signs the link message (no gas) and asks the site to link this wallet to the paddle. */
-export async function linkMyWallet(alias: string): Promise<string> {
+/**
+ * Links the wallet in this browser to the paddle: the wallet shares its account and signs a short
+ * message (free, no gas), and the site saves exactly that address. Returns the address saved.
+ */
+export async function linkMyWallet(alias: string): Promise<Hex> {
   trace.length = 0;
   note(`link Paddle ${alias}`);
   try {
-    const p = provider()!;
-    const wallet = await requestAccount();
+    const p = provider();
+    if (!p) throw new Error("No wallet in this browser. Open this page in MetaMask's browser.");
+    // Same order as paying: Sepolia first, then the account, so MetaMask Mobile (which shares accounts
+    // per network) signs with an account it has shared on the network the paddle pays on.
+    await switchToSepolia(p);
+    note(`wallet network: ${Number.parseInt((await p.request({ method: "eth_chainId" })) as string, 16)}`);
+    const wallet = (await requestAccount()).toLowerCase() as Hex;
+    note(`account shared: ${wallet}`);
     const issuedAtMs = Date.now();
+    note("asking the wallet to sign the link message");
     const signature = await p.request({ method: "personal_sign", params: [stringToHex(bindMessage(alias, wallet, issuedAtMs)), wallet] });
+    note("signed; saving the address");
     const response = await fetch("/api/bind", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ alias, wallet, issuedAtMs, signature }),
     });
     const data = (await response.json().catch(() => ({}))) as { error?: string };
+    note(`site answered ${response.status}${response.ok ? "" : `: ${data.error ?? ""}`}`);
     if (!response.ok) throw new Error(data.error ?? `The site answered ${response.status}.`);
     return wallet;
   } catch (error) {

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { config } from "./config";
+import { config, engineSocketUrl } from "./config";
 import { AuctionSimulator } from "./simulator";
 import type { AuctionState, BidEvent, StreamMessage } from "./types";
 
@@ -68,7 +68,7 @@ export function useAuctionStream(auctionId: string, options: { autoplay?: boolea
 
     const connect = () => {
       setConnection(attempt === 0 ? "connecting" : "reconnecting");
-      socket = new WebSocket(`${config.engineWsUrl}/auctions/${encodeURIComponent(auctionId)}/stream`);
+      socket = new WebSocket(engineSocketUrl(`/auctions/${encodeURIComponent(auctionId)}/stream`));
       socket.onopen = () => {
         attempt = 0;
         setConnection("open");

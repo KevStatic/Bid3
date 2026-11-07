@@ -79,6 +79,10 @@ The engine must also match two things exactly:
 2. Set `NEXT_PUBLIC_ENGINE_HTTP_URL` / `NEXT_PUBLIC_ENGINE_WS_URL` to the hosted engine.
 3. Deploy `web/` to Vercel (root directory `web`). Point the NFC stickers at `https://<domain>/seat/<alias>`.
 
+**On the engine's laptop instead (current setup):** set `NEXT_PUBLIC_ENGINE_WS_URL=/engine` and `ENGINE_URL=http://localhost:8010` in `.env.local`, then `npm run build && npm start`. The site passes `/engine/*` (including the live WebSocket) through to the engine, so a phone needs only the site's address. Arkiv reads go through the site too (`NEXT_PUBLIC_ARKIV_RPC_PATH=/api/arkiv-rpc`, server-only `ARKIV_RPC_URL`), so no access key reaches a browser. `scripts/site-tunnel.sh quick` (Cloudflare quick tunnel, URL changes on reboot) or `scripts/site-tunnel.sh` (your own domain, named tunnel) puts the site online for the NFC stickers.
+
+**Paddle wallets:** a paddle gets its wallet only from a phone. The sticker opens `/seat/<alias>`. In a normal browser the page offers **Open in MetaMask**; inside MetaMask, **Link my wallet** has the wallet sign a short message and the site saves exactly that address. A linked paddle can't be relinked from a phone; the auctioneer unlinks it in `/admin` first. Nobody types an address in, and the site never makes up a wallet.
+
 Before the demo:
 
 - **Explorer links:** confirm the Arkiv explorer's entity URL format in `explorerEntityUrl` (`src/lib/config.ts`).

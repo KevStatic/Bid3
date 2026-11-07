@@ -3,7 +3,7 @@ import { rabdi } from "@arkiv-network/sdk/chains";
 import { asc, desc, eq, gte, lte } from "@arkiv-network/sdk/query";
 import { str, u64 } from "@arkiv-network/sdk/schema";
 import { http } from "viem";
-import { config } from "../config";
+import { arkivReadUrl, config } from "../config";
 import { pickListing } from "./pick-listing";
 import { AuctionBid, AuctionDefinition, AuctionResult, AuctionSnapshot, ItemListing } from "./schemas";
 import { sortListings } from "./sort";
@@ -62,7 +62,7 @@ export class LiveArkivReader implements ArkivReader {
   readonly mode = "live" as const;
   private readonly client = createPublicClient({
     chain: rabdi({ accessKey: config.arkivAccessKey }),
-    transport: http(),
+    transport: http(arkivReadUrl()),
   });
 
   async listListings(filter: ListingFilter = {}): Promise<Listing[]> {

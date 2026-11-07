@@ -25,13 +25,13 @@ A live auction run with physical paddle tags, built for **ETHGlobal Mumbai (Nov 
 | Button | **Press = bid at the next step** (not a jump bid on a running clock) | engine `auction.py` |
 | Who opens bidding | **The auctioneer**, on one lot at a time, from the website's `/admin` page (password). Bidding is open at once; no minimum number of paddles; any seated paddle can join at any time and bid. A **lone bidder wins** at their bid. A **no-bid timer** (1/2/5/10 min, chosen by the auctioneer) runs from opening; with no bid the lot closes UNSOLD and goes back to the seller (Kev, Sat 7 Nov ~02:15) | engine `auction.py`, `web/src/app/admin/` |
 | Leader switches OFF | **Bid stays binding**; they can still win | engine `auction.py` |
-| Payment | **The winning paddle's wallet pays the seller on Sepolia.** Tapping the paddle's NFC sticker opens `/seat/<alias>` in the phone's browser, which has its own **phone wallet** (a Sepolia key kept in that browser); one tap links it to the paddle, and **after the hammer it pays the seller automatically**. MetaMask is a fallback (unreliable on phones, Sat 7 Nov ~06:20). The rate is **0 ETH per credit** (only gas), editable on `/admin`. If the winner doesn't pay within 10 min (or has no wallet, or the lot has no seller wallet), **the lot stays with the seller**. Paddles without a wallet can still bid. Off unless the engine has `PAYMENTS=1` (Kev, Sat 7 Nov ~04:30) | engine `payments.py`, `web/src/lib/payments*.ts` |
+| Payment | **The winning paddle's wallet pays the seller on Sepolia.** Tapping the paddle's NFC sticker opens `/seat/<alias>` on the phone. **The paddle's wallet is the phone's own wallet**: in MetaMask's browser ("Open in MetaMask" from a normal browser), **Link my wallet** has the wallet sign a short message and the site saves exactly that address. No throwaway browser wallets and no typed-in addresses (the admin "Link a real account" box is gone). A linked paddle keeps its wallet until the auctioneer unlinks it in `/admin`. The winner pays with **Pay with MetaMask** on the seat page (Kev, Sat 7 Nov ~09:30, replacing the ~06:20 phone wallet). The rate is **0 ETH per credit** (only gas), editable on `/admin`. If the winner doesn't pay within 10 min (or has no wallet, or the lot has no seller wallet), **the lot stays with the seller**. Paddles without a wallet can still bid. Off unless the engine has `PAYMENTS=1` (Kev, Sat 7 Nov ~04:30) | engine `payments.py`, `web/src/lib/payments*.ts` |
 | Step | **+5% per bid** (500 bps), configurable per auction | rules |
 | Countdown | V6 hardware rounds use 10 s via published countdownMs=10000; unchanged engine seed defaults to 5 s unless SEED_COUNTDOWN_MS=10000 | auction rules / engine env |
 | Stale presses | A press whose `stateVersion` predates the latest bid is refused as `STALE` | engine + firmware |
-| Frontend | Next.js 16 on Vercel | `web/` |
+| Frontend | Next.js 16. **Runs on Kev's laptop** (`npm run build && npm start`), public on Kev's own domain through a named Cloudflare tunnel (`scripts/site-tunnel.sh`). `bid3.vercel.app` stays as a **read-only view**: the engine's `ADMIN_TOKEN` was rotated, so it can't link, sell, run lots or confirm payments (Kev, Sat 7 Nov ~09:30, after submissions closed) | `web/`, `scripts/site-tunnel.sh` |
 | Backend | FastAPI engine + Python bridge on the laptop + TypeScript Arkiv worker | `engine/`, `bridge/`, `arkiv-worker/` |
-| Hosting | Vercel (web). Engine, worker and bridge run on Kev's laptop; the engine is public through a Cloudflare quick tunnel (Railway trial expired; Kev, Fri 6 Nov ~22:15) | READMEs (still say Railway), changelog "hosting moved to the laptop" |
+| Hosting | Everything on Kev's laptop: engine, worker, bridge and the website. Phones reach the site (and the engine, at `/engine` on the site) through the named tunnel on Kev's domain. The quick tunnel (`scripts/tunnel.sh`) only keeps Vercel's read-only view live (Sat 7 Nov ~09:30; before that, web on Vercel, from Fri 6 Nov ~22:15) | section 5, changelog "Paddle wallets come only from the phone" |
 | Firmware | Arduino C++ for the tags and gateway, on branch **`firmware`** (not on `main`) | `origin/firmware` |
 | Commits | **Only Kev commits.** AI assistants write files but never run `git commit` or `git push` | — |
 
@@ -72,7 +72,9 @@ Planning documents (outside the repo): `/Users/kev/Hackathons/EthGlobal/Plans/`.
 | Outbox (`GET /outbox`, `POST /outbox/{id}/published`) | `engine/bid3_engine/api.py` | `arkiv-worker/src/index.ts` |
 | Public lot list `GET /auctions` (auctionId, listingId, phase, priceMinor, bidCount, leaderAlias, payment) | `engine/bid3_engine/api.py` | `web/src/lib/lot-state.ts` (`EngineLot`) |
 | Admin calls (`POST /auctions`, `/open`, `/cancel` with `ADMIN_TOKEN`; house rules 5% / 10 s / ceiling 10× opening) | `engine/bid3_engine/api.py` | `web/src/lib/admin/server.ts` |
-| Payments API (`GET /bindings`, `/payments`, `/payments/settings`, `/auctions/{id}/payment`; admin `POST /bindings`, `/bindings/{alias}/clear`, `/payments/settings`, `/auctions/{id}/payment/paid`; `sellerAddress` on `POST /auctions`) | `engine/bid3_engine/api.py`, `payments.py` | `web/src/lib/payments-shared.ts` (`Payment`, `Binding`), `payments.ts`, `payments-server.ts`, `lib/admin/server.ts` |
+| Payments API (`GET /bindings`, `/payments`, `/payments/settings`, `/auctions/{id}/payment`; admin `POST /bindings`, `/bindings/{alias}/clear`, `/payments/settings`, `/auctions/{id}/payment/paid`; `sellerAddress` on `POST /auctions`). The web calls `POST /bindings` only from `/api/bind`, after checking the wallet's signature and that the paddle isn't linked to another wallet | `engine/bid3_engine/api.py`, `payments.py` | `web/src/lib/payments-shared.ts` (`Payment`, `Binding`), `payments.ts`, `payments-server.ts`, `lib/admin/server.ts` |
+| Engine pass-through: `/engine/*` on the site (HTTP and the live WebSocket) goes to `ENGINE_URL`, when set | `web/next.config.ts` | `web/src/lib/config.ts` (`engineSocketUrl`; `NEXT_PUBLIC_ENGINE_WS_URL=/engine`), `lib/admin/server.ts` (server calls use `ENGINE_URL`) |
+| Arkiv read pass-through: browser JSON-RPC to `/api/arkiv-rpc` goes to `ARKIV_RPC_URL` (key in the URL, server-only); sends and signing are refused | `web/src/app/api/arkiv-rpc/route.ts` | `web/src/lib/config.ts` (`arkivReadUrl`, `NEXT_PUBLIC_ARKIV_RPC_PATH`), `lib/arkiv/live-reader.ts`, `lib/wallet.ts` |
 | Seller listings (`POST /listings` operator, `GET /listings/{id}`; outbox kind `ItemListing`, logical id `listing:<listingId>`; signed text `listingMessage()`) | `engine/bid3_engine/api.py`, `web/src/lib/listing-shared.ts` | `web/src/lib/listing-server.ts`, `web/src/lib/arkiv/write-listing.ts` (`listItem`), `arkiv-worker/src/writer.ts` |
 | Settlement outbox record (`AuctionSettlement`, logical id `settlement:<auctionId>:<epoch>`) | `engine/bid3_engine/payments.py` (`settlement_record`) | `arkiv-worker/src/writer.ts` |
 | Paddle roster (tagRef, alias, publicKey per seat) | `firmware/integration/auction-template.json` | `web/src/lib/admin/paddles.ts`. Check: `jq -c '[.seats[] \| {tagRef, alias, publicKey}]' firmware/integration/auction-template.json` and compare |
@@ -86,20 +88,27 @@ Checks that catch drift:
 
 ## 5. How to run everything locally
 
-**Live setup (Kev's laptop, current).** Open four VS Code terminals and rename each one (right-click → Rename). Start them in this order:
+**Live setup (Kev's laptop, current: everything runs here).** Open five VS Code terminals and rename each one (right-click → Rename). Start them in this order. The paths work from anywhere, so a command can be rerun after Ctrl-C:
 
 | Terminal | Command | Ready when |
 |---|---|---|
-| `engine` | `cd engine && set -a && source .env && set +a && caffeinate -i .venv/bin/python -m bid3_engine` | `Uvicorn running on http://0.0.0.0:8010` |
-| `worker` | `cd arkiv-worker && npm start` | `Writing to Arkiv as 0xCf11CEa33b48A48901DD2a03730524a69E64e32d` |
-| `bridge` | `scripts/bridge.sh` (waits for the gateway on USB, starts the bridge on whatever port name it gets, and follows it if it comes back under another name) | `/health` shows `bridgeConnected: true` |
-| `ops` | `scripts/tunnel.sh` (once). Then run lots from **`https://bid3.vercel.app/admin`** ("Open bidding" per lot). Fallbacks: `scripts/new-lot.sh` / `scripts/auto-rounds.sh` (create their own keyboard listing, no admin) | the tunnel script prints ✅ for the engine and the site |
+| `engine` | `cd ~/Hackathons/Bid3/engine && set -a && source .env && set +a && caffeinate -i .venv/bin/python -m bid3_engine` | `Uvicorn running on http://0.0.0.0:8010` |
+| `worker` | `cd ~/Hackathons/Bid3/arkiv-worker && npm start` | `Writing to Arkiv as 0xCf11CEa33b48A48901DD2a03730524a69E64e32d` |
+| `bridge` | `~/Hackathons/Bid3/scripts/bridge.sh` (waits for the gateway on USB, starts the bridge on whatever port name it gets, and follows it if it comes back under another name) | `/health` shows `bridgeConnected: true` |
+| `site` | `cd ~/Hackathons/Bid3/web && npm run build && npm start` (rebuild after changing `web/.env.local` or code) | `Ready` on `http://localhost:3000` |
+| `ops` | `~/Hackathons/Bid3/scripts/site-tunnel.sh quick` (phones, today: prints the sticker URLs) or `~/Hackathons/Bid3/scripts/site-tunnel.sh` (phones, your own domain, once set up), and `~/Hackathons/Bid3/scripts/tunnel.sh` (keeps Vercel's read-only view live). Run lots from **`http://localhost:3000/admin`** or `https://<your-host>/admin`. Fallbacks: `scripts/new-lot.sh` / `scripts/auto-rounds.sh` | both print ✅ |
 
-**Admin page:** needs two **server** env vars in Vercel, both type Secret and without the `NEXT_PUBLIC_` prefix: `ADMIN_TOKEN` (the same value as in `engine/.env`) and `ADMIN_PASSWORD` (Kev's choice). The browser sends the password to `/api/admin/*`; the server calls the engine through the tunnel with the token. The demo catalogue is `npm run seed-catalogue` in `arkiv-worker` (six items, lots 11–16, `bid3-cat-NN`; safe to rerun).
+**Admin page:** `web/.env.local` holds `ADMIN_TOKEN` (the same value as in `engine/.env`) and `ADMIN_PASSWORD`, both server-only. The browser sends the password to `/api/admin/*`; the site's server calls the engine at `ENGINE_URL` with the token. Vercel still has the old token, so its admin and payment routes are refused by the engine. The demo catalogue is `npm run seed-catalogue` in `arkiv-worker` (six items, lots 11–16, `bid3-cat-NN`; safe to rerun).
 
-**Payments on Sepolia:** add `PAYMENTS=1` to `engine/.env`, then restart the **engine and the worker together** (an older worker can't write `AuctionSettlement` and would hold up the outbox). No new Vercel env vars: the payment routes use `ADMIN_TOKEN`; `SEPOLIA_RPC_URL` is optional. Write `https://bid3.vercel.app/seat/K7` (and `…/M4`) onto each paddle's NFC sticker: the tap opens the seat page in the phone's normal browser. Each phone's wallet (address shown on the seat page, with a Copy button) needs a little Sepolia ETH for gas, sent once from any wallet or the faucet. The same browser keeps the same wallet; another browser or cleared site data makes a new one. Lots pay the listing's seller wallet (the demo catalogue's is the publisher wallet); only lots started from `/admin` after this change carry it, so lots from `new-lot.sh`/`auto-rounds.sh` end UNPAID.
+**Payments on Sepolia:** add `PAYMENTS=1` to `engine/.env`, then restart the **engine and the worker together** (an older worker can't write `AuctionSettlement` and would hold up the outbox). No new Vercel env vars: the payment routes use `ADMIN_TOKEN`; `SEPOLIA_RPC_URL` is optional. Write `https://<your-host>/seat/K7` (and `…/M4`) onto each paddle's NFC sticker (NDEF URL record). The tap opens the seat page; "Open in MetaMask" moves it into MetaMask's browser, where "Link my wallet" saves that wallet's address (one signature, no gas). The worker's gas station tops linked wallets up with Sepolia ETH for gas (`GAS_STATION_KEY`, funded once). To give a paddle to another phone, unlink it in `/admin` first. Lots pay the listing's seller wallet (the demo catalogue's is the publisher wallet); only lots started from `/admin` after this change carry it, so lots from `new-lot.sh`/`auto-rounds.sh` end UNPAID.
 
-**Tunnel:** `scripts/tunnel.sh` runs `cloudflared` in the background, outside any terminal (log: `~/Library/Logs/bid3-tunnel.log`).
+**Site tunnel (phones):** `scripts/site-tunnel.sh` puts `localhost:3000` online in the background (logs: `~/Library/Logs/bid3-site-*.log`). Two modes:
+- `quick`: a Cloudflare quick tunnel, no account. The URL lasts until a reboot or `stop`; then rewrite the stickers.
+- Default: a **named** tunnel on your own domain. One-time setup: `cloudflared tunnel login` (pick the domain), then `scripts/site-tunnel.sh setup bid3.<your-domain>`. The URL never changes, so the stickers are written once.
+
+Both refuse to start while `web/.env.local` would send the worker's Arkiv key to browsers. The current setup sends no key: Arkiv reads go through `/api/arkiv-rpc`.
+
+**Quick tunnel (Vercel's read-only view):** `scripts/tunnel.sh` runs `cloudflared` in the background, outside any terminal (log: `~/Library/Logs/bid3-tunnel.log`).
 - Closing terminals or restarting the engine, worker or bridge doesn't change its URL. Only a reboot or `scripts/tunnel.sh stop` does.
 - Each run prints the current URL and checks whether `bid3.vercel.app` is built with it. If not, set Vercel's `NEXT_PUBLIC_ENGINE_WS_URL=wss://…` and redeploy.
 - Leave `NEXT_PUBLIC_ENGINE_HTTP_URL` unset: the site works it out from the WS URL.
@@ -164,6 +173,89 @@ With no env, the web app runs a labelled in-browser simulation and bundled sampl
 ---
 
 ## Changelog
+
+### 2026-11-07 ~10:50 IST: "operator token required" on every NFC link = Vercel still on the old build
+- **Seen (Kev):** every MetaMask/NFC link attempt shows "operator token required".
+- **Cause:** nothing pushed yet (`origin/main` = `19fe3ca`), so `bid3.vercel.app` still serves the old seat page ("Link this phone to Paddle", throwaway wallet) built with the **old** `ADMIN_TOKEN`. The engine, restarted 10:42 with the new token, refuses its `POST /bindings` (401). Engine, worker and bridge are healthy; `/bindings` is empty.
+- **Fix (Kev):** set Vercel's `ADMIN_TOKEN` first, then push (the push's build picks up the env var). Don't just Redeploy the old commit: with a valid token the old page would link throwaway wallets again.
+
+### 2026-11-07 ~10:45 IST: runbook for a final full showing on bid3.vercel.app
+- **Ask (Kev):** run the whole app on Vercel one last time; give the engine, worker, bridge and ops commands that work.
+- **No code changed.** Checked:
+  - The live Vercel bundle is built with `wss://vaccine-furnished-with-boat.trycloudflare.com`, the engine tunnel `scripts/tunnel.sh` has kept running since Fri 23:56. No Vercel URL change is needed while that tunnel stays up.
+  - The engine on :8010 and the local site were **down** at ~10:40 (Kev started the engine at 10:42). `scripts/bridge.sh` was still running and reconnects to the engine on its own.
+  - The engine's `CORS_ORIGINS` includes `https://bid3.vercel.app` (preview URLs are refused).
+  - The uncommitted web changes work in Vercel mode: without `ENGINE_URL` and `NEXT_PUBLIC_ARKIV_RPC_PATH`, server calls use the tunnel URL and Arkiv reads use the browser key, as before. `next build` passed in a scratch copy with Vercel-style env. In a smoke test, every page returned 200 and a wrong admin password got 401. The seat bundle has "Open in MetaMask" / "Link my wallet" / "Pay with MetaMask". No token appears in `.next/static`.
+  - Gas station `0xb5Cf…5515` holds **0 Sepolia ETH**.
+- **For Vercel to be full again (Kev):** set Vercel's `ADMIN_TOKEN` to `engine/.env`'s, then commit and push. The push deploys the new seat page and the new token together. Don't add `ENGINE_URL` or `NEXT_PUBLIC_ARKIV_RPC_PATH` on Vercel.
+- **Open:**
+  - The NFC stickers must open `https://bid3.vercel.app/seat/K7` and `…/M4`, or the laptop site must keep running behind the quick site tunnel.
+  - Fund the gas station, unless the phones' wallets already have Sepolia ETH.
+
+### 2026-11-07 ~10:35 IST: site online for the phones; throwaway links cleared
+- Kev restarted the engine (10:00:44), so it now runs with the new `ADMIN_TOKEN`. Vercel's old token gets 401: the old seat page can no longer link anything.
+- Unlinked K7 (`0xec86…`) and M4 (`0x2787…`), the last throwaway wallets. Both paddles are empty, waiting for a phone.
+- Quick site tunnel: `https://gospel-minolta-music-dealt.trycloudflare.com`. `/engine/health` and `/seat/K7` and `/seat/M4` answer 200 through it. It lasts until a reboot or `site-tunnel.sh stop`.
+- `scripts/site-tunnel.sh`: it was silent for up to 90 s while a new tunnel came up. It now prints the URL first and says it's checking.
+- **Next (Kev):** write the stickers to `https://gospel-minolta-music-dealt.trycloudflare.com/seat/K7` and `…/M4`, then link each phone through "Open in MetaMask" → "Link my wallet".
+
+### 2026-11-07 ~10:15 IST: why phones still got random addresses; Arkiv key kept off the browser
+- **Seen (Kev):**
+  - Local `/admin` "Open bidding" failed with `operator token required`.
+  - Tapping the NFC stickers still linked random addresses: K7 `0xec86…` at 09:51, M4 `0x2787…` at 09:50.
+- **Cause (one for both):** the engine was still running from 09:04, with the **old** `ADMIN_TOKEN` (rotated at 09:28).
+  - The local site (new token) was refused.
+  - The stickers still open `bid3.vercel.app`, whose old seat page makes a throwaway wallet per phone browser; with the old token still accepted, those links went through.
+  - The new seat page can't produce these addresses (it has no wallet-making code); they all came from Vercel.
+- **Fix:** restart the engine (it reads the new token), unlink K7 and M4 in the local `/admin`, put the site online (`scripts/site-tunnel.sh quick`, or the domain), and rewrite the stickers to it. My attempts to restart the engine and to open the tunnel were blocked by the assistant's permission rules; Kev runs both.
+- **New: Arkiv reads go through the site** (`app/api/arkiv-rpc/route.ts`, reads only; sends and signing get 400). The browser uses `NEXT_PUBLIC_ARKIV_RPC_PATH=/api/arkiv-rpc`; the server holds `ARKIV_RPC_URL` with the key. `web/.env.local` no longer has a browser key. This replaces "get the read-only key from Vercel" as the condition for going public.
+- **`scripts/site-tunnel.sh quick`:** a Cloudflare quick tunnel for the site, no account needed. It prints the sticker URLs.
+- **Tested:**
+  - `tsc`, `eslint` and `next build` clean.
+  - `eth_chainId` through `/api/arkiv-rpc` returns Rabdi (`0x76edaf`); `eth_sendRawTransaction` is refused.
+  - The worker key appears in no file under `.next/static`.
+  - Headless Chrome: `/catalogue` shows the live Arkiv lots, every browser Arkiv request goes to `localhost:3000/api`, and there are no page exceptions.
+- **Not tested:** through a public tunnel (blocked here), and real phones.
+
+### 2026-11-07 ~09:45 IST: Paddle wallets come only from the phone; the site runs on the laptop
+- **Seen (Kev):** the room showed "random" addresses. Found:
+  - Lot 21's payer `0x8cdf…6b26` is Kev's own MetaMask account. It was linked to K7 at ~08:52 (admin "Link a real account", or "Link my MetaMask wallet" in that Chrome), and a payment keeps the payer it had at the hammer.
+  - M4's `0x2787…` is a throwaway wallet from the old "Link this phone" button, re-linked from the Vercel seat page at 09:09 and again at 09:20. Every phone browser makes a new one, and it silently replaced whatever was linked before.
+  - "0 ETH" is the agreed rate (Kev: keep it).
+- **Ask (Kev):** no hardcoded addresses and no made-up wallets. Do the NFC flow properly, saving exactly the phone's wallet address. Backend and website on the laptop; Vercel read-only; phones reach the laptop through his own domain (Cloudflare).
+- **Web changes:**
+  - **Seat page** (`app/seat/[alias]/seat-wallet.tsx`, rewritten): a normal browser gets **Open in MetaMask** (deep link to the same page). Inside MetaMask, **Link my wallet** switches to Sepolia, asks for the account, has it sign `bindMessage()`, and the site saves exactly that address. Winners pay with **Pay with MetaMask**.
+  - `lib/phone-wallet.ts` deleted.
+  - **`/api/bind`** (`payments-server.ts`) refuses a paddle already linked to a different wallet (409, "ask the auctioneer to unlink it first"), and is a no-op for the same wallet.
+  - **Admin:** the "Link a real account" field, `/api/admin/bind` and `adminLinkWallet` removed. Unlink stays.
+  - **Engine through the site:** with `ENGINE_URL` set, `next.config.ts` rewrites `/engine/*` to the engine, including the WebSocket (Next 16 proxies upgrades for external rewrites). `NEXT_PUBLIC_ENGINE_WS_URL=/engine` is resolved against the page (`engineSocketUrl`). Server calls use `ENGINE_URL` (`lib/admin/server.ts`). A phone needs only the site's address; Vercel is unaffected (no `ENGINE_URL`).
+- **New `scripts/site-tunnel.sh`:** a named Cloudflare tunnel from Kev's domain to `localhost:3000`. Commands: `setup <host>`, start, `stop`. It refuses to start while `web/.env.local` would publish the worker's Arkiv access key.
+- **Config (git-ignored):**
+  - `engine/.env` and `web/.env.local` have a **new `ADMIN_TOKEN`**, so Vercel's admin and payment calls are refused once the engine restarts.
+  - `web/.env.local`: `NEXT_PUBLIC_ENGINE_WS_URL=/engine`, `ENGINE_URL=http://localhost:8010`, a strong `ADMIN_PASSWORD` (replacing `bid3-local`).
+  - Backups of both files are outside the repo.
+- **Live engine:** unlinked M4 (`0x2787…`, the throwaway). K7 had already been unlinked. Both paddles now wait for a phone.
+- **Tested:**
+  - Engine 61 passed; `check-schemas` match; web `tsc`, `eslint` and `next build` clean.
+  - On a scratch engine (:8098) behind a production build: `/engine/health` and the live WebSocket through the site; `/api/admin/bind` 404.
+  - Real signatures: the saved address is exactly the signer's; another wallet can't replace it (409); a forged claim is refused (400); unlink needs the password; relinking works after unlink.
+  - Headless Chrome at phone size with a stand-in MetaMask: no wallet shows only "Open in MetaMask" (deep link `metamask.app.link/dapp/<host>/seat/M4`). In the wallet, Link calls switch → account → sign and saves that address. A paddle linked elsewhere shows "ask the auctioneer" and no Link button. No page exceptions.
+  - Against the live engine: the production site's pages, `/engine`, the live stream and the admin login.
+- **Not tested:**
+  - The named tunnel itself (needs Kev's `cloudflared tunnel login` and domain).
+  - Real MetaMask Mobile linking and paying.
+  - Admin actions after the token change (they need the engine restarted with the new token).
+- **Open:**
+  - The site's read-only Arkiv key (Vercel has it) must replace the worker's key in `web/.env.local` before the site goes public.
+  - Rewrite the NFC stickers to `https://<host>/seat/<alias>`.
+
+### 2026-11-07 ~09:10 IST: everything on localhost (submissions closed)
+- **Ask (Kev):** submissions are closed; run everything on localhost.
+- **Running:** engine (:8010), worker and `scripts/bridge.sh` (gateway on `cu.usbserial-110`, `/health` `bridgeConnected: true`) were already up in Kev's terminals. The web app now also runs locally: `cd web && npm run dev` → `http://localhost:3000`.
+- **`web/.env.local`** (git-ignored; previous copy backed up outside the repo) gained the local settings Vercel had: `NEXT_PUBLIC_ARKIV_MODE=live`, `NEXT_PUBLIC_ARKIV_ACCESS_KEY` (copied from `arkiv-worker/.env`), `NEXT_PUBLIC_PUBLISHER_ADDRESS` (`0xCf11…`), `ADMIN_TOKEN` (copied from `engine/.env`) and a local `ADMIN_PASSWORD=bid3-local`. The engine already allows `http://localhost:3000` (CORS). No code changed.
+- **Checked:** `/`, `/room`, `/admin`, `/catalogue`, `/explorer`, `/seller`, `/seat/K7`, `/auction/bid3-004/bids` return 200; `/api/admin/login` accepts `bid3-local` and rejects a wrong password.
+- **Not checked:** live Arkiv data and a full lot from the local `/admin` in a browser.
+- **Still true:** the tunnel and `bid3.vercel.app` keep working beside it (NFC stickers still open the Vercel seat pages). Phones can't open `localhost`; use the LAN URL the dev server prints if needed.
 
 ### 2026-11-07 ~08:40 IST: admin can link a paddle to a real account
 - **Seen (Kev, Etherscan):** M4's payment came from `0x2787…`, the phone wallet a phone's browser created, and went to the seller `0x37f0…`. That payment is PAID (`bid3-mw5szzvnc0kg`, tx `0xfea124…`), so the flow works. Kev wants payments to come from the team's 3 real MetaMask accounts.

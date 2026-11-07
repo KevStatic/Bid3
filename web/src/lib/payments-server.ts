@@ -3,7 +3,9 @@
  *
  * These routes are public: anyone can ask to link a wallet or report a payment. They only reach the
  * engine (with the operator token, which never leaves the server) after checking:
- * - linking: the wallet signed bindMessage() for this paddle in the last few minutes;
+ * - linking: the wallet signed bindMessage() for this paddle in the last few minutes, so the address
+ *   saved is exactly the one the phone's wallet app holds (never a typed-in one), and the paddle isn't
+ *   already linked to a different wallet (the auctioneer unlinks it first, in /admin);
  * - paying: the Sepolia transaction is mined and successful, from the wallet the engine expects,
  *   to the seller, for at least the amount due, carrying this lot's memo.
  * The engine then re-checks the payer, payee, amount, window and that the transaction is unused.
@@ -34,7 +36,11 @@ export async function linkWallet(body: unknown): Promise<void> {
   }
   const valid = await verifyMessage({ address: wallet, message: bindMessage(alias, wallet, issuedAtMs), signature: signature as Hex }).catch(() => false);
   if (!valid) throw new AdminError(400, "The signature doesn't match this wallet.");
-  await engine("/bindings", "POST", { alias, wallet: wallet.toLowerCase() });
+  const current = ((await engine("/bindings")) as Record<string, { wallet?: string } | undefined>)[alias]?.wallet;
+  if (current && !isAddressEqual(current as Hex, wallet)) {
+    throw new AdminError(409, `Paddle ${alias} is already linked to ${current.slice(0, 6)}…${current.slice(-4)}. Ask the auctioneer to unlink it first.`);
+  }
+  if (!current) await engine("/bindings", "POST", { alias, wallet: wallet.toLowerCase() });
 }
 
 export type PayReply = { state: "pending" } | { state: "paid" | "closed"; payment: Payment };
@@ -85,18 +91,4 @@ export async function clearBinding(body: unknown): Promise<void> {
   const alias = typeof (body as { alias?: unknown })?.alias === "string" ? (body as { alias: string }).alias.toUpperCase() : "";
   if (!PADDLE_ROSTER.some((seat) => seat.alias === alias)) throw new AdminError(400, "There's no paddle with that name.");
   await engine(`/bindings/${encodeURIComponent(alias)}/clear`, "POST");
-}
-
-/**
- * Admin: link a paddle to a wallet address directly (e.g. one of the team's MetaMask accounts), with no
- * signature. The winner then pays from that account with "Pay with MetaMask". The engine still refuses
- * while the paddle has bid on the live lot or owes a payment.
- */
-export async function adminLinkWallet(body: unknown): Promise<void> {
-  const b = (body ?? {}) as Record<string, unknown>;
-  const alias = typeof b.alias === "string" ? b.alias.toUpperCase() : "";
-  const wallet = typeof b.wallet === "string" ? b.wallet.trim() : "";
-  if (!PADDLE_ROSTER.some((seat) => seat.alias === alias)) throw new AdminError(400, "There's no paddle with that name.");
-  if (!isAddress(wallet)) throw new AdminError(400, "That isn't a wallet address (0x followed by 40 characters).");
-  await engine("/bindings", "POST", { alias, wallet: wallet.toLowerCase() });
 }

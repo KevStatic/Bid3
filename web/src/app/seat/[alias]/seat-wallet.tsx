@@ -1,16 +1,18 @@
 "use client";
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useEffectEvent, useState, useSyncExternalStore } from "react";
-import { formatEther, type Hex } from "viem";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { Button } from "@/components/ui";
 import { clockTime, shortAddress } from "@/lib/format";
 import {
   addressUrl,
   confirmPayment,
+  connectedAccount,
   formatEth,
   hasBrowserWallet,
   linkMyWallet,
+  onAccountsChanged,
+  openInMetaMaskUrl,
   paymentTrace,
   SEPOLIA_FAUCET,
   sendPayment,
@@ -20,107 +22,74 @@ import {
   usePaymentSettings,
   type Payment,
 } from "@/lib/payments";
-import { confirmPhonePayment, linkPhoneWallet, payFromPhone, phoneBalance, phoneWallet, sentFor } from "@/lib/phone-wallet";
 import { useListingByAuction } from "@/lib/use-arkiv";
 
 const noSubscribe = () => () => {};
 const link = "font-semibold text-cobalt hover:underline";
 
-let cachedPhone: string | null | undefined;
-/** This browser's phone wallet address (created on first read), lowercase. */
-const phoneAddress = () => {
-  if (cachedPhone === undefined) cachedPhone = phoneWallet()?.address.toLowerCase() ?? null;
-  return cachedPhone;
-};
+/** Reopens this page inside MetaMask's browser, where the bidder's wallet is. */
+const openInMetaMask = () => window.location.assign(openInMetaMaskUrl(window.location.pathname));
 
-/** Auction ids this page has already tried to pay automatically (once per lot per page load). */
-const autoPaid = new Set<string>();
+function Address({ wallet }: { wallet: string }) {
+  return (
+    <a className={`tabular ${link}`} href={addressUrl(wallet)} target="_blank" rel="noreferrer">
+      {shortAddress(wallet)}
+    </a>
+  );
+}
 
 /**
- * The wallet behind this paddle. Tapping the paddle's NFC sticker opens this page in the phone's
- * browser. The page has its own Sepolia wallet ("this phone's wallet"): one tap links it to the paddle,
- * and if the paddle wins, it pays the seller by itself, with no wallet app and nothing to confirm.
- * MetaMask stays available as a fallback. Hidden when the engine has payments off.
+ * The wallet behind this paddle. Tapping the paddle's NFC sticker opens this page on the bidder's phone.
+ * The paddle pays from the bidder's own wallet: in MetaMask's browser, "Link my wallet" has the wallet
+ * share its account and sign a short message (free), and the site saves exactly that address. Nothing
+ * is typed in and no wallet is made up. A paddle keeps its wallet until the auctioneer unlinks it in
+ * /admin, so another phone can't replace it by accident. If the paddle wins, that wallet pays the
+ * seller from this page. Hidden when the engine has payments off.
  */
 export function SeatWallet({ alias }: { alias: string }) {
   const queryClient = useQueryClient();
   const settings = usePaymentSettings();
   const bindings = useBindings();
   const payments = usePayments();
-  const phone = useSyncExternalStore(noSubscribe, phoneAddress, () => null);
-  const browserWallet = useSyncExternalStore(noSubscribe, hasBrowserWallet, () => false);
-  const balance = useQuery({
-    queryKey: ["sepolia", "balance", phone],
-    enabled: !!phone,
-    refetchInterval: 10_000,
-    queryFn: () => phoneBalance(phone as Hex),
-  });
+  const hasWallet = useSyncExternalStore(noSubscribe, hasBrowserWallet, () => false);
+  const account = useQuery({ queryKey: ["wallet", "account"], enabled: hasWallet, queryFn: connectedAccount });
+  useEffect(() => onAccountsChanged(() => void queryClient.invalidateQueries({ queryKey: ["wallet"] })), [queryClient]);
+
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [trace, setTrace] = useState<string[]>([]);
   const [sent, setSent] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
 
   const binding = bindings.data?.[alias];
-  const linkedHere = !!phone && binding?.wallet.toLowerCase() === phone;
+  const linked = binding?.wallet.toLowerCase() ?? null;
+  const here = account.data ?? null;
+  const mine = !!linked && here === linked;
   const owed = (payments.data ?? []).filter((p) => p.winnerAlias === alias && p.status === "DUE");
-  const dueHere = owed.find((p) => !!phone && p.payer?.toLowerCase() === phone);
-  // Pay only once there's gas: the laptop's gas station tops linked wallets up within ~30 s.
-  const funded = !!dueHere && balance.data !== undefined && balance.data > BigInt(dueHere.amountWei);
-  const refresh = () => {
-    void queryClient.invalidateQueries({ queryKey: ["engine"] });
-    void queryClient.invalidateQueries({ queryKey: ["sepolia"] });
-  };
 
   const run = async (label: string, action: () => Promise<unknown>) => {
     setBusy(label);
     setError(null);
     try {
       await action();
-      refresh();
     } catch (e) {
       setError((e as Error).message);
       setTrace(paymentTrace());
     } finally {
       setBusy(null);
+      void queryClient.invalidateQueries({ queryKey: ["engine"] });
+      void queryClient.invalidateQueries({ queryKey: ["wallet"] });
     }
   };
 
-  const payHere = (p: Payment) =>
+  const pay = (p: Payment) =>
     run(`pay:${p.auctionId}`, async () => {
-      const txHash = await payFromPhone(p);
+      const txHash = await sendPayment(p);
       setSent(txHash);
-      await confirmPhonePayment(p.auctionId, txHash);
+      await confirmPayment(p.auctionId, txHash);
     });
 
-  // When the hammer falls on this paddle, this phone pays by itself (once per lot; payFromPhone never pays twice).
-  const autoPay = useEffectEvent((p: Payment) => {
-    if (autoPaid.has(p.auctionId) || busy) return;
-    autoPaid.add(p.auctionId);
-    void payHere(p);
-  });
-  const dueId = dueHere?.auctionId;
-  useEffect(() => {
-    if (!dueHere || !funded) return;
-    const timer = setTimeout(() => autoPay(dueHere), 300);
-    return () => clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- run once per lot that becomes due here and has gas
-  }, [dueId, funded]);
-
   if (!settings.data?.enabled) return null;
-
   const rate = settings.data.weiPerCredit === "0" ? "0 ETH, so only gas" : `${formatEth(settings.data.weiPerCredit)} per credit of the winning bid`;
-  const empty = balance.data === 0n;
-
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(phone ?? "");
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2_000);
-    } catch {
-      setCopied(false);
-    }
-  };
 
   return (
     <section className="mt-6 rounded-stage border border-line bg-surface p-6" aria-labelledby="seat-wallet">
@@ -128,80 +97,59 @@ export function SeatWallet({ alias }: { alias: string }) {
         Paying for Paddle {alias}
       </h2>
 
-      {phone ? (
-        <div className="mt-3 rounded-panel border border-line bg-surface-2 p-4">
-          <p className="text-sm font-semibold text-ink-2">This phone&apos;s wallet (Sepolia)</p>
-          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
-            <a className={`tabular ${link}`} href={addressUrl(phone)} target="_blank" rel="noreferrer">
-              {shortAddress(phone)}
-            </a>
-            <span className="tabular text-sm text-ink-2">{balance.data === undefined ? "…" : `${formatEther(balance.data)} ETH`}</span>
-            <Button variant="quiet" size="sm" onClick={copy}>
-              {copied ? "Copied" : "Copy address"}
-            </Button>
-          </div>
-          {empty ? (
-            <p className="mt-2 text-sm text-ink-2">
-              {linkedHere
-                ? "No Sepolia ETH yet. Bid3 sends it a little for gas automatically, within about 30 seconds."
-                : "No Sepolia ETH yet. Once it's linked to a paddle, Bid3 sends it a little for gas automatically."}{" "}
-              If it stays at 0, send some from any wallet or the{" "}
-              <a className={link} href={SEPOLIA_FAUCET} target="_blank" rel="noreferrer">
-                faucet
-              </a>
-              .
-            </p>
-          ) : null}
-        </div>
-      ) : (
-        <p className="mt-3 text-ink-2">This browser can&apos;t keep a wallet (private browsing?). Open the page in a normal tab.</p>
-      )}
-
-      <p className="mt-4 text-ink-2">
-        {linkedHere ? (
+      <p className="mt-3 text-ink-2">
+        {!linked ? (
           <>
-            <span className="font-semibold text-live">Linked.</span> Paddle {alias} pays from this phone. If it wins, the seller is paid automatically: {rate}.
+            Paddle {alias} has no wallet yet. Link yours: if the paddle wins, your wallet pays the seller ({rate}). Linking is free: your wallet signs a
+            short message, with no gas.
           </>
-        ) : binding ? (
+        ) : mine ? (
           <>
-            Paddle {alias} pays from another wallet,{" "}
-            <a className={`tabular ${link}`} href={addressUrl(binding.wallet)} target="_blank" rel="noreferrer">
-              {shortAddress(binding.wallet)}
-            </a>
-            .
+            <span className="font-semibold text-live">Linked.</span> Paddle {alias} pays from this wallet, <Address wallet={linked} />. If it wins, you
+            pay the seller from this page ({rate}).
           </>
         ) : (
-          <>Link this phone to Paddle {alias}. If it wins, this phone pays the seller automatically: {rate}. Linking is free.</>
+          <>
+            Paddle {alias} pays from <Address wallet={linked} />.
+            {here ? (
+              <>
+                {" "}
+                This wallet is <Address wallet={here} />: to link it instead, ask the auctioneer to unlink the paddle first.
+              </>
+            ) : null}
+          </>
         )}
       </p>
 
-      {phone && !linkedHere ? (
-        <Button className="mt-4" variant="paddle" disabled={busy !== null || !!binding?.locked} onClick={() => run("link", () => linkPhoneWallet(alias))}>
-          {busy === "link" ? "Linking…" : `Link this phone to Paddle ${alias}`}
+      {!hasWallet && (!linked || owed.length > 0) ? (
+        <>
+          <Button className="mt-4" variant="paddle" onClick={openInMetaMask}>
+            Open in MetaMask
+          </Button>
+          <p className="mt-2 text-sm text-ink-3">
+            Your address comes from your wallet app, so linking and paying happen in MetaMask&apos;s browser. No MetaMask? Install it, then tap the sticker
+            again.
+          </p>
+        </>
+      ) : null}
+
+      {hasWallet && !linked ? (
+        <Button className="mt-4" variant="paddle" disabled={busy !== null} onClick={() => run("link", () => linkMyWallet(alias))}>
+          {busy === "link" ? "Check your wallet…" : `Link my wallet to Paddle ${alias}`}
         </Button>
       ) : null}
-      {binding?.locked && !linkedHere ? (
-        <p className="mt-2 text-sm text-ink-3">Its wallet is locked for now: the paddle has bid on the live lot, or it owes a payment.</p>
-      ) : null}
+
+      {binding?.locked ? <p className="mt-2 text-sm text-ink-3">Its wallet is locked for now: the paddle has bid on the live lot, or it owes a payment.</p> : null}
 
       {owed.map((p) => (
         <OwedPayment
           key={p.auctionId}
           payment={p}
-          phone={phone}
-          busy={busy}
-          funded={balance.data !== undefined && balance.data > BigInt(p.amountWei)}
-          onPayHere={() => payHere(p)}
-          onPayMetaMask={
-            browserWallet
-              ? () =>
-                  run(`pay:${p.auctionId}`, async () => {
-                    const txHash = await sendPayment(p);
-                    setSent(txHash);
-                    await confirmPayment(p.auctionId, txHash);
-                  })
-              : null
-          }
+          fromHere={!!here && p.payer?.toLowerCase() === here}
+          paying={busy === `pay:${p.auctionId}`}
+          disabled={busy !== null}
+          onPay={hasWallet ? () => pay(p) : openInMetaMask}
+          inWallet={hasWallet}
         />
       ))}
 
@@ -229,39 +177,26 @@ export function SeatWallet({ alias }: { alias: string }) {
           <pre className="mt-2 whitespace-pre-wrap break-all font-mono">{trace.join("\n")}</pre>
         </details>
       ) : null}
-
-      {browserWallet && !linkedHere ? (
-        <details className="mt-6 text-sm text-ink-3">
-          <summary className="cursor-pointer">Use the wallet app in this browser instead (MetaMask)</summary>
-          <p className="mt-2">Less reliable on phones: the wallet app has to approve each step.</p>
-          <Button className="mt-2" variant="outline" size="sm" disabled={busy !== null || !!binding?.locked} onClick={() => run("link-mm", () => linkMyWallet(alias))}>
-            {busy === "link-mm" ? "Check your wallet…" : "Link my MetaMask wallet"}
-          </Button>
-        </details>
-      ) : null}
     </section>
   );
 }
 
 function OwedPayment({
   payment,
-  phone,
-  busy,
-  funded,
-  onPayHere,
-  onPayMetaMask,
+  fromHere,
+  paying,
+  disabled,
+  onPay,
+  inWallet,
 }: {
   payment: Payment;
-  phone: string | null;
-  busy: string | null;
-  funded: boolean;
-  onPayHere: () => void;
-  onPayMetaMask: (() => void) | null;
+  fromHere: boolean;
+  paying: boolean;
+  disabled: boolean;
+  onPay: () => void;
+  inWallet: boolean;
 }) {
   const { data: lot } = useListingByAuction(payment.auctionId);
-  const fromHere = !!phone && payment.payer?.toLowerCase() === phone;
-  const paying = busy === `pay:${payment.auctionId}`;
-  const signed = fromHere ? sentFor(payment.auctionId) : null;
 
   return (
     <div className="mt-5 rounded-panel border border-paddle bg-paddle-soft p-4">
@@ -269,27 +204,19 @@ function OwedPayment({
         Paddle {payment.winnerAlias} won {lot ? lot.title : payment.auctionId}. It pays the seller {formatEth(payment.amountWei)} on Sepolia.
       </p>
       <p className="mt-1 text-sm text-ink-2">
-        {fromHere
-          ? paying
-            ? "Paying from this phone now…"
-            : signed
-              ? "Sent from this phone. Waiting for the site to confirm it."
-              : funded
-                ? "This phone pays it automatically."
-                : "This phone pays it as soon as it has gas (Bid3 is topping it up)."
-          : payment.payer
-            ? `It's paid from ${shortAddress(payment.payer)}.`
-            : "Link a wallet above and it pays straight away."}{" "}
+        {payment.payer ? (
+          <>
+            From <Address wallet={payment.payer} />
+            {inWallet && !fromHere ? ": switch MetaMask to that account to pay." : "."}
+          </>
+        ) : (
+          "Link a wallet above, then pay."
+        )}{" "}
         Due by {clockTime(payment.dueByMs)}, or the lot stays with the seller.
       </p>
-      {fromHere && !paying ? (
-        <Button className="mt-3" variant="paddle" disabled={busy !== null} onClick={onPayHere}>
-          {signed ? "Check the payment again" : "Pay now"}
-        </Button>
-      ) : null}
-      {!fromHere && payment.payer && onPayMetaMask ? (
-        <Button className="mt-3" variant="outline" disabled={busy !== null} onClick={onPayMetaMask}>
-          {paying ? "Check your wallet…" : "Pay with MetaMask"}
+      {payment.payer ? (
+        <Button className="mt-3" variant={fromHere || !inWallet ? "paddle" : "outline"} disabled={disabled} onClick={onPay}>
+          {paying ? "Check your wallet…" : inWallet ? "Pay with MetaMask" : "Open in MetaMask to pay"}
         </Button>
       ) : null}
     </div>

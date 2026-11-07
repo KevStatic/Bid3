@@ -11,8 +11,9 @@ import { adminPost, type Reply } from "./admin-post";
 
 /**
  * Sepolia payments: how much ETH each credit of the hammer price costs (0 = a 0 ETH payment, only
- * gas), and which wallet each paddle pays from. Paddles get their wallet when a bidder taps the NFC
- * sticker and links it on the seat page; the auctioneer can unlink one here.
+ * gas), and which wallet each paddle pays from. A paddle gets its wallet only from a phone: the bidder
+ * taps the NFC sticker and the seat page saves the address their wallet app signs for. The auctioneer
+ * can unlink a paddle here (so another phone can link it), but never types an address in.
  */
 export function PaymentsPanel({ password, onFailure }: { password: string; onFailure: (reply: Extract<Reply, { ok: false }>) => void }) {
   const queryClient = useQueryClient();
@@ -21,7 +22,6 @@ export function PaymentsPanel({ password, onFailure }: { password: string; onFai
   const [draft, setDraft] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
-  const [linkTo, setLinkTo] = useState<Record<string, string>>({});
   const rateId = useId();
 
   if (!settings.data) return null; // engine unreachable, or older than payments
@@ -38,15 +38,6 @@ export function PaymentsPanel({ password, onFailure }: { password: string; onFai
     if (!reply.ok) return onFailure(reply);
     setDraft(null);
     setSaved(`Saved: ${draft} ETH per credit, for lots that sell from now on.`);
-    refresh();
-  };
-
-  const onLink = async (alias: string) => {
-    setBusy(`link:${alias}`);
-    const reply = await adminPost("/api/admin/bind", password, { alias, wallet: linkTo[alias] ?? "" });
-    setBusy(null);
-    if (!reply.ok) return onFailure(reply);
-    setLinkTo({ ...linkTo, [alias]: "" });
     refresh();
   };
 
@@ -111,7 +102,7 @@ export function PaymentsPanel({ password, onFailure }: { password: string; onFai
                     {shortAddress(binding.wallet)}
                   </a>
                 ) : (
-                  "No wallet: tap the paddle's NFC sticker to link one"
+                  "No wallet yet: tap the paddle's NFC sticker with a phone to link one"
                 )}
                 {binding?.locked ? " · locked (bid on the live lot, or owes a payment)" : ""}
               </span>
@@ -120,24 +111,6 @@ export function PaymentsPanel({ password, onFailure }: { password: string; onFai
                   {busy === alias ? "Unlinking…" : "Unlink"}
                 </Button>
               ) : null}
-              <form
-                className="flex w-full gap-2"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  void onLink(alias);
-                }}
-              >
-                <input
-                  aria-label={`Wallet address for Paddle ${alias}`}
-                  placeholder="Link a real account: paste its 0x… address"
-                  value={linkTo[alias] ?? ""}
-                  onChange={(e) => setLinkTo({ ...linkTo, [alias]: e.target.value })}
-                  className="tabular h-9 min-w-0 flex-1 rounded-lg border border-line bg-surface-2 px-3 text-sm text-ink placeholder:text-ink-3 focus:border-cobalt focus:outline-none"
-                />
-                <Button type="submit" variant="outline" size="sm" disabled={busy !== null || !!binding?.locked || !(linkTo[alias] ?? "").trim()}>
-                  {busy === `link:${alias}` ? "Linking…" : "Link"}
-                </Button>
-              </form>
             </li>
           );
         })}
