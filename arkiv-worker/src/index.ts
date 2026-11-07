@@ -66,6 +66,8 @@ async function main() {
         const message = (error as Error).message ?? String(error);
         log(`failed ${item.kind} ${item.logicalId}: ${message}`);
         await engine(`/outbox/${item.id}/failed`, { method: "POST", body: JSON.stringify({ error: message.slice(0, 480) }) }).catch(() => {});
+        // A seller's listing never holds up the live auction's records: skip it, it's retried next round.
+        if (item.kind === "ItemListing") continue;
         await sleep(Math.min(30_000, 1_000 * 2 ** Math.min(failures, 5)));
         break; // keep order: retry this record before later ones
       }

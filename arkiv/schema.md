@@ -6,7 +6,7 @@ Only `.indexed()` attributes can be filtered on. Each indexed attribute below ex
 
 | Entity (schema name) | Owner | Expires | Flags |
 |---|---|---|---|
-| `ItemListing` (`bid3.listing`) | **The seller's own wallet** | Auction close + 24 h | none (seller may edit before the round opens) |
+| `ItemListing` (`bid3.listing`) | **The seller's own wallet** (the seller signs it; the Bid3 publisher creates it, then transfers ownership with `changeOwnership`, so `$creator` is the publisher and `$owner` the seller) | Auction close + 24 h | none (seller may edit or delete it) |
 | `AuctionDefinition` (`bid3.definition`) | Bid3 publisher wallet | 30 days | read-only |
 | `AuctionBid` (`bid3.bid`) | Bid3 publisher wallet | 7 days | read-only |
 | `AuctionSnapshot` (`bid3.snapshot`) | Bid3 publisher wallet | 10 minutes | none |

@@ -5,10 +5,12 @@ import { useId, useMemo, useState, type ReactNode } from "react";
 import { useAccount } from "wagmi";
 import { Button, buttonClass, CheckMark, LotTag, PageHeader, Panel, Pill, SourceBadge } from "@/components/ui";
 import { WalletButton } from "@/components/wallet-button";
-import { publishListing, type PublishOutcome } from "@/lib/arkiv/write-listing";
-import { explorerEntityUrl, isSampleArkiv } from "@/lib/config";
+import { useQuery } from "@tanstack/react-query";
+import { listItem, type ListOutcome } from "@/lib/arkiv/write-listing";
+import { config, explorerEntityUrl, isSampleArkiv } from "@/lib/config";
 import { formatMinor, shortKey } from "@/lib/format";
 import { lotStateLine, useLotStates, type LotState } from "@/lib/lot-state";
+import { paymentTrace } from "@/lib/payments";
 import { useListings } from "@/lib/use-arkiv";
 
 const CATEGORIES = ["Electronics", "Watches", "Cameras", "Textiles", "Craft", "Music", "Collectibles", "Other"];
@@ -45,9 +47,21 @@ export function SellerFlow() {
   const ids = { title: useId(), category: useId(), condition: useId(), description: useId(), start: useId() };
   const [item, setItem] = useState({ title: "", category: "Electronics", condition: "", description: "" });
   const [startText, setStartText] = useState("100.00");
-  const [published, setPublished] = useState<(PublishOutcome & { lotNumber: number; title: string }) | null>(null);
+  const [published, setPublished] = useState<(ListOutcome & { lotNumber: number; title: string }) | null>(null);
+  // Bid3 writes the signed listing to Arkiv within seconds; follow it until it's there.
+  const written = useQuery({
+    queryKey: ["engine", "listing", published?.listingId],
+    enabled: !!published && !published.simulated && !!config.engineHttpUrl,
+    refetchInterval: (query) => ((query.state.data as { published?: boolean } | undefined)?.published ? false : 3_000),
+    queryFn: async () => {
+      const response = await fetch(`${config.engineHttpUrl}/listings/${encodeURIComponent(published!.listingId)}`, { cache: "no-store" });
+      if (!response.ok) throw new Error(`engine answered ${response.status}`);
+      return (await response.json()) as { published: boolean; entityKey: string | null; attempts: number; error: string | null };
+    },
+  });
   const [publishing, setPublishing] = useState(false);
   const [publishError, setPublishError] = useState<string | null>(null);
+  const [trace, setTrace] = useState<string[]>([]);
 
   const all = useListings({});
   const startMinor = toMinor(startText);
@@ -68,7 +82,7 @@ export function SellerFlow() {
     const suffix = newLotSuffix();
     const title = item.title.trim();
     try {
-      const outcome = await publishListing(
+      const outcome = await listItem(
         {
           listingId: `lot-${suffix}`,
           lotNumber: nextLot,
@@ -85,9 +99,10 @@ export function SellerFlow() {
       );
       setPublished({ ...outcome, lotNumber: nextLot, title });
       setItem({ title: "", category: item.category, condition: "", description: "" });
-      void all.refetch();
+      setTimeout(() => void all.refetch(), 8_000);
     } catch (error) {
       setPublishError(error instanceof Error ? error.message : "The wallet didn't sign the listing.");
+      setTrace(paymentTrace());
     } finally {
       setPublishing(false);
     }
@@ -148,14 +163,11 @@ export function SellerFlow() {
               {isConnected ? (
                 <div className="flex flex-wrap items-center justify-between gap-4">
                   <p className="max-w-md text-sm text-ink-2">
-                    Your wallet signs the write, so the listing is yours. It costs a little testnet gas (tGLM) on Arkiv&apos;s Rabdi network:{" "}
-                    <a href="https://hub.arkiv.network/faucet" target="_blank" rel="noreferrer" className="font-semibold text-cobalt hover:underline">
-                      free from the faucet
-                    </a>
-                    .
+                    Your wallet signs the listing. It&apos;s free and works on any network, Sepolia included: no Rabdi, no tGLM. Bid3 writes it to
+                    Arkiv and makes your wallet its owner.
                   </p>
                   <Button onClick={onPublish} disabled={!valid || publishing}>
-                    {publishing ? "Waiting for your wallet…" : "Publish listing"}
+                    {publishing ? "Waiting for your signature…" : "Publish listing"}
                   </Button>
                 </div>
               ) : (
@@ -169,25 +181,38 @@ export function SellerFlow() {
                   {publishError}
                 </p>
               ) : null}
+              {publishError && trace.length ? (
+                <details className="mt-2 text-xs text-ink-3">
+                  <summary className="cursor-pointer">What happened, step by step</summary>
+                  <pre className="mt-2 whitespace-pre-wrap break-all font-mono">{trace.join("\n")}</pre>
+                </details>
+              ) : null}
               {!valid && isConnected ? <p className="mt-3 text-sm text-ink-3">Add a title, the condition and an opening bid above zero.</p> : null}
             </div>
 
             {published ? (
               <div role="status" className="mt-6 rounded-panel border border-live/40 bg-live-soft p-5">
                 <p className="flex items-center gap-2 font-semibold">
-                  <CheckMark ok /> {published.simulated ? "Listing prepared (sample mode, nothing sent)" : `Listed as Lot ${String(published.lotNumber).padStart(2, "0")}`}
+                  <CheckMark ok />{" "}
+                  {published.simulated
+                    ? "Listing prepared (sample mode, nothing sent)"
+                    : written.data?.published
+                      ? `Listed as Lot ${String(published.lotNumber).padStart(2, "0")}`
+                      : "Signed. Bid3 is writing it to Arkiv…"}
                 </p>
                 <p className="mt-1 text-sm text-ink-2">
-                  {published.title} is in Lots for everyone now. The auctioneer opens bidding on it; you&apos;ll see how it goes under Your lots.{" "}
-                  {published.simulated ? null : (
+                  {published.simulated || written.data?.published
+                    ? `${published.title} is in Lots for everyone now. The auctioneer opens bidding on it; you'll see how it goes under Your lots. `
+                    : `This takes a few seconds. ${written.data?.error ? `Arkiv hasn't taken it yet (${written.data.error.slice(0, 120)}); Bid3 keeps retrying.` : ""}`}
+                  {written.data?.entityKey ? (
                     <>
                       Entity{" "}
-                      <a className="tabular text-cobalt hover:underline" href={explorerEntityUrl(published.entityKey)} target="_blank" rel="noreferrer">
-                        {shortKey(published.entityKey)}
+                      <a className="tabular text-cobalt hover:underline" href={explorerEntityUrl(written.data.entityKey)} target="_blank" rel="noreferrer">
+                        {shortKey(written.data.entityKey)}
                       </a>
-                      .
+                      , owned by your wallet.
                     </>
-                  )}
+                  ) : null}
                 </p>
                 <Link href="/catalogue" className={buttonClass("outline", "md", "mt-4")}>
                   See it in Lots

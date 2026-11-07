@@ -10,7 +10,7 @@ from bid3_engine.api import create_app
 from bid3_engine.payments import Payments, PaymentError
 from bid3_engine.store import Store
 
-from test_api import ADMIN, WORKER, intent, make_settings
+from test_api import ADMIN, WORKER, empty_client, intent, make_settings  # noqa: F401 (fixture)
 
 WINNER = "0x" + "a1" * 20
 OTHER = "0x" + "b2" * 20
@@ -198,3 +198,29 @@ def test_payments_off_keeps_rounds_as_they_were(tmp_path):
         assert c.get("/auctions/bid3-pay/payment").status_code == 404
         assert c.get("/auctions").json()[0]["payment"] is None
         assert not [r for r in c.get("/outbox?limit=100", headers=WORKER).json() if r["kind"] == "AuctionSettlement"]
+
+
+# ------------------------------------------------------------ seller listings (written to Arkiv by the publisher)
+
+LISTING = {
+    "listingId": "lot-abc", "auctionId": "bid3-abc", "lotNumber": 20, "title": "Water bottle", "category": "Other",
+    "condition": "Works perfectly", "description": "Nice bottle of water.", "sellerAlias": "Seller 8cdf",
+    "sellerAddress": "0x" + "8C" * 20, "startPriceMinor": 4_000, "closesAtMs": 1_800_000_000_000, "signature": "0x" + "ab" * 65,
+}
+
+
+def test_a_signed_listing_is_queued_for_arkiv_once(empty_client):
+    c = empty_client
+    assert c.post("/listings", json=LISTING).status_code == 401
+    assert c.post("/listings", headers=ADMIN, json={**LISTING, "title": "x"}).status_code == 422
+    assert c.post("/listings", headers=ADMIN, json={**LISTING, "sellerAddress": "nope"}).status_code == 422
+    assert c.post("/listings", headers=ADMIN, json=LISTING).status_code == 202
+    assert c.post("/listings", headers=ADMIN, json=LISTING).status_code == 409
+    [record] = [r for r in c.get("/outbox?limit=100", headers=WORKER).json() if r["kind"] == "ItemListing"]
+    assert record["logicalId"] == "listing:lot-abc" and record["auctionId"] == "bid3-abc"
+    assert record["payload"]["sellerAddress"] == "0x" + "8c" * 20 and record["payload"]["status"] == "UPCOMING"
+    assert c.get("/listings/lot-abc").json()["published"] is False
+    assert c.post(f"/outbox/{record['id']}/published", headers=WORKER, json={"entityKey": "0xkey", "txHash": "0xtx"}).status_code == 200
+    status = c.get("/listings/lot-abc").json()
+    assert status["published"] is True and status["entityKey"] == "0xkey"
+    assert c.get("/listings/nope").status_code == 404

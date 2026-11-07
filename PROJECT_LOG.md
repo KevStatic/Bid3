@@ -73,6 +73,7 @@ Planning documents (outside the repo): `/Users/kev/Hackathons/EthGlobal/Plans/`.
 | Public lot list `GET /auctions` (auctionId, listingId, phase, priceMinor, bidCount, leaderAlias, payment) | `engine/bid3_engine/api.py` | `web/src/lib/lot-state.ts` (`EngineLot`) |
 | Admin calls (`POST /auctions`, `/open`, `/cancel` with `ADMIN_TOKEN`; house rules 5% / 10 s / ceiling 10× opening) | `engine/bid3_engine/api.py` | `web/src/lib/admin/server.ts` |
 | Payments API (`GET /bindings`, `/payments`, `/payments/settings`, `/auctions/{id}/payment`; admin `POST /bindings`, `/bindings/{alias}/clear`, `/payments/settings`, `/auctions/{id}/payment/paid`; `sellerAddress` on `POST /auctions`) | `engine/bid3_engine/api.py`, `payments.py` | `web/src/lib/payments-shared.ts` (`Payment`, `Binding`), `payments.ts`, `payments-server.ts`, `lib/admin/server.ts` |
+| Seller listings (`POST /listings` operator, `GET /listings/{id}`; outbox kind `ItemListing`, logical id `listing:<listingId>`; signed text `listingMessage()`) | `engine/bid3_engine/api.py`, `web/src/lib/listing-shared.ts` | `web/src/lib/listing-server.ts`, `web/src/lib/arkiv/write-listing.ts` (`listItem`), `arkiv-worker/src/writer.ts` |
 | Settlement outbox record (`AuctionSettlement`, logical id `settlement:<auctionId>:<epoch>`) | `engine/bid3_engine/payments.py` (`settlement_record`) | `arkiv-worker/src/writer.ts` |
 | Paddle roster (tagRef, alias, publicKey per seat) | `firmware/integration/auction-template.json` | `web/src/lib/admin/paddles.ts`. Check: `jq -c '[.seats[] \| {tagRef, alias, publicKey}]' firmware/integration/auction-template.json` and compare |
 
@@ -91,7 +92,7 @@ Checks that catch drift:
 |---|---|---|
 | `engine` | `cd engine && set -a && source .env && set +a && caffeinate -i .venv/bin/python -m bid3_engine` | `Uvicorn running on http://0.0.0.0:8010` |
 | `worker` | `cd arkiv-worker && npm start` | `Writing to Arkiv as 0xCf11CEa33b48A48901DD2a03730524a69E64e32d` |
-| `bridge` | `cd bridge && set -a && source ../engine/.env && set +a && ../engine/.venv/bin/python bid3_bridge.py --port /dev/cu.usbserial-<n> --engine ws://localhost:8010 --token "$BRIDGE_TOKEN"` | `/health` shows `bridgeConnected: true` |
+| `bridge` | `scripts/bridge.sh` (waits for the gateway on USB, starts the bridge on whatever port name it gets, and follows it if it comes back under another name) | `/health` shows `bridgeConnected: true` |
 | `ops` | `scripts/tunnel.sh` (once). Then run lots from **`https://bid3.vercel.app/admin`** ("Open bidding" per lot). Fallbacks: `scripts/new-lot.sh` / `scripts/auto-rounds.sh` (create their own keyboard listing, no admin) | the tunnel script prints ✅ for the engine and the site |
 
 **Admin page:** needs two **server** env vars in Vercel, both type Secret and without the `NEXT_PUBLIC_` prefix: `ADMIN_TOKEN` (the same value as in `engine/.env`) and `ADMIN_PASSWORD` (Kev's choice). The browser sends the password to `/api/admin/*`; the server calls the engine through the tunnel with the token. The demo catalogue is `npm run seed-catalogue` in `arkiv-worker` (six items, lots 11–16, `bid3-cat-NN`; safe to rerun).
@@ -163,6 +164,65 @@ With no env, the web app runs a labelled in-browser simulation and bundled sampl
 ---
 
 ## Changelog
+
+### 2026-11-07 ~07:45 IST: gateway "Down": USB drop-outs, and a bridge launcher that follows the port
+- **Seen (Kev):** the room showed Gateway Down (bridge and engine OK) on every test run.
+- **Found:**
+  - The gateway wasn't on the USB bus at all: no `cu.usbserial-*`, and its CH340 chip wasn't listed. Only the "USB2.0 HUB" dongle and its network adapter were.
+  - The Mac didn't sleep (`pmset` log), and the same drop happened at ~06:20. So it's physical: the cable or the hub/dongle (the gateway has shown up as `usbserial-110`, i.e. behind the hub).
+  - The bridge process had also stopped.
+- **Software gap:** the bridge retries the *same* port name every 2 s. macOS has given the gateway both `usbserial-10` and `usbserial-110` today, so after a re-plug under the other name the bridge never reconnected, and the room stayed "Gateway Down".
+- **New `scripts/bridge.sh`** (bridge code unchanged): waits for any `cu.usbserial-*` or `cu.wchusbserial-*`, starts the bridge on it with the token from `engine/.env`, restarts it on the new port when the gateway comes back under another name, and restarts it if it exits. Runbook (section 5) updated.
+- **Tested** with a fake device folder and a stand-in bridge: waits with nothing plugged in; starts on `-110`; follows an unplug that came back as `-10`; restarts after the bridge exited.
+- **Physical fix (Kev):** plug the gateway straight into the Mac with a known data cable, not through the dongle.
+
+### 2026-11-07 ~07:40 IST: "Sell an item" on Sepolia: the seller signs, Bid3 writes to Arkiv
+- **Ask (Kev):** selling should use Sepolia, not Arkiv. Chosen option: **the seller's wallet stays on Sepolia (or any network); the listing is still an Arkiv entity** (keeps the Arkiv track story).
+- **Flow:**
+  1. The seller signs a readable message with the listing (`web/src/lib/listing-shared.ts`, `listingMessage`). It's free, with no network switch, no Rabdi and no tGLM.
+  2. `/api/list` checks the signature (10-minute freshness, field limits) and calls the engine's new `POST /listings` with the operator token.
+  3. The engine queues an `ItemListing` outbox record. The worker writes it with the publisher wallet, then `changeOwnership` to the seller, so `$creator` is the publisher and `$owner` the seller.
+  4. The seller page follows `GET /listings/{id}` until it's on Arkiv, then links the entity ("owned by your wallet").
+- **Safety:**
+  - A failing listing never blocks the outbox: the worker skips it and retries next round, so auction records keep flowing.
+  - The worker's retry finds an already-created listing by `$creator` and only hands it over if needed.
+  - The engine refuses a second submit of the same listing.
+  - The old direct-to-Arkiv `publishListing` is kept but no longer used by the page.
+- **Tested:**
+  - Engine: 61 passed (new: queue once, auth, validation, status).
+  - Worker: `tsc`, `check-schemas`. Web: `tsc`, `eslint`, `next build`.
+  - **Real Arkiv, twice:**
+    - Worker hand-over: written by the publisher, owned by the seller, a retry reused it, and the owner deleted it.
+    - **Full flow:** a wallet on Sepolia (chain 11155111) signed through the site's own `listItem`; the site copy checked it; the scratch engine queued it; the real worker wrote and transferred it; Arkiv showed owner = seller and creator = publisher; then it was deleted.
+- **To go live:** restart the **worker** (an old worker doesn't know `ItemListing`) and the **engine** (new endpoint), between lots, then push the web changes.
+- **Trade-off:** the publisher pays the tGLM for every listing, and anyone with a wallet can list. Fine for the demo; a rate limit would be the next step.
+
+### 2026-11-07 ~07:20 IST: "Sell an item" fails with "Execution error without revert data"
+- **Seen (Kev, desktop MetaMask, Account 2 `0x8cDf…6b26` with 20 tGLM):** Publish showed MetaMask's "Add Rabdi", then "Transaction failed: Execution error without revert data".
+- **Ruled out:**
+  - Gas (20 tGLM).
+  - The access key in the Rabdi address the site gives MetaMask: tested directly, the public endpoint, the site's read-only key and the worker's key all accept reads and transaction submission.
+  - The listing itself: a write estimate with the same fields passes on Rabdi.
+- **Most likely cause:** the SDK reports any refusal from the wallet's send step (MetaMask's permission check, a cancel, a chain mismatch) as that generic message, hiding the real reason. The site switched or added Rabdi but never re-asked for the account there. MetaMask shares accounts with a site per network, the same issue as Pay now on the phones.
+- **Change (`web/src/lib/arkiv/write-listing.ts`, `app/seller/seller-flow.tsx`):**
+  - After switching or adding Rabdi, the site asks for the accounts again and checks the connected seller is among them.
+  - Errors show the whole cause chain (the wallet's own reason) instead of the SDK's generic text, with a plain-words message for the permission refusal.
+  - The seller page shows "What happened, step by step".
+- **Tested:** against a fake MetaMask (Rabdi unknown, accounts shared per network, real Rabdi network for the estimate), it added Rabdi, re-asked for accounts, passed the real gas estimate, reached signing, and showed the wallet's real reason. `tsc` and `eslint` clean. **Not yet confirmed with real MetaMask**: the next Publish either works or shows the real reason and the trace.
+
+### 2026-11-07 ~07:10 IST: plain-words wallet connection errors
+- **Seen (Kev, desktop Chrome, Sell an item):** "Request of type 'wallet_requestPermissions' already pending for origin https://bid3.vercel.app. Please wait." under both Connect wallet buttons.
+- **Cause:** MetaMask itself. An earlier connection popup was still waiting (closed, hidden, or MetaMask locked), so every new Connect click is refused until it's answered from the MetaMask extension. Not related to recent changes.
+- **Change (`web/src/components/wallet-button.tsx`):** the button now explains that error ("open the MetaMask extension, unlock it and approve or reject the request") and a cancelled request, instead of showing MetaMask's raw text. `tsc` and `eslint` clean.
+
+### 2026-11-07 ~07:00 IST: removed duplicate keyboard listings from Arkiv
+- **Ask (Kev):** clear out most of the duplicated "Hand-wired split keyboard, 42 keys" lots on the Lots page.
+- **Deleted** six `ItemListing` entities with `deleteEntity`, each by its owner (Rabdi tx hashes):
+  - The two Lot 03 (`bid3-003`), owned by the old rotated publisher `0xcA49…242f`: `0x9484d448…aa0d`, `0x753ae7d6…9630`.
+  - Lots 05–08 (`bid3-005`…`008`), owned by the publisher `0xCf11…e32d`: `0xb406830a…09c6`, `0xcc58639b…4975`, `0xd2bde105…c559`, `0x8a935bd4…7faa`.
+- **Kept:** Lot 04 (`bid3-004`, the verified hardware round the README cites) and Lot 15 (`bid3-cat-15`, the catalogue item).
+- **Their results and bids are untouched**, so Results still lists those rounds; only the duplicate listings are gone. Arkiv now has 8 listings: 04, 11–16, and 17 (a teammate's test listing owned by `0x76EE…`, which only that wallet can delete).
+- **Note:** `scripts/new-lot.sh` and `scripts/auto-rounds.sh` create a new keyboard listing on every run. Use `/admin` to run lots, or they'll pile up again.
 
 ### 2026-11-07 ~06:50 IST: "No bidding is going on right now" instead of an old lot
 - **Ask (Kev):** with no auction running, the watch room showed the previous lot's data. It should say no bidding is going on.

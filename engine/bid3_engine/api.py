@@ -24,6 +24,10 @@ Paddle wallets and Sepolia payments (payments.py)
   POST /payments/settings             {weiPerCredit}  (operator token)
   POST /auctions/{id}/payment/paid    {txHash, payer, payee, amountWei}  (operator token: the website checked Sepolia)
 
+Seller listings (the seller signs; the Bid3 publisher writes it to Arkiv and hands the seller ownership)
+  POST /listings                      a listing the website checked the seller's signature on  (operator token)
+  GET  /listings/{listingId}          whether it's on Arkiv yet, and its entity key
+
 Arkiv worker (Authorization: Bearer WORKER_TOKEN)
   GET  /outbox                        records waiting to be written to Arkiv
   POST /outbox/{id}/published         {entityKey, txHash}
@@ -82,6 +86,26 @@ class BindingIn(BaseModel):
 
 class PaymentSettingsIn(BaseModel):
     weiPerCredit: str = Field(pattern=r"^[0-9]{1,30}$")
+
+
+ID_PATTERN = r"^[A-Za-z0-9._-]{1,64}$"
+
+
+class ListingIn(BaseModel):
+    """An ItemListing the seller signed. Strict limits: the Arkiv write must never fail on its content."""
+
+    listingId: str = Field(pattern=ID_PATTERN)
+    auctionId: str = Field(pattern=ID_PATTERN)
+    lotNumber: int = Field(ge=1, le=1_000_000)
+    title: str = Field(min_length=3, max_length=120)
+    category: str = Field(min_length=1, max_length=40)
+    condition: str = Field(min_length=1, max_length=200)
+    description: str = Field(default="", max_length=2_000)
+    sellerAlias: str = Field(min_length=1, max_length=40)
+    sellerAddress: str = Field(pattern=ADDRESS.pattern)
+    startPriceMinor: int = Field(gt=0, le=1_000_000_000)
+    closesAtMs: int = Field(gt=0, lt=10**13)
+    signature: str = Field(pattern=r"^0x[0-9a-fA-F]{130,520}$")
 
 
 class PaidIn(BaseModel):
@@ -341,6 +365,31 @@ def create_app(settings: Settings | None = None, runtime: Runtime | None = None)
                 raise HTTPException(409, str(exc)) from exc
             runtime.store.queue_outbox(auction_id, kind, logical_id, payload, now)
         return payments.view(auction_id) or {}
+
+    # ------------------------------------------------------------ seller listings
+
+    @app.post("/listings", dependencies=[Depends(admin)], status_code=202)
+    async def queue_listing(body: ListingIn) -> dict[str, Any]:
+        logical_id = f"listing:{body.listingId}"
+        if runtime.store.outbox_by_logical_id(logical_id) is not None:
+            raise HTTPException(409, "This listing was already submitted.")
+        payload = {**body.model_dump(), "sellerAddress": body.sellerAddress.lower(), "status": "UPCOMING"}
+        runtime.store.queue_outbox(body.auctionId, "ItemListing", logical_id, payload, runtime.clock())
+        return {"queued": True, "listingId": body.listingId}
+
+    @app.get("/listings/{listing_id}")
+    async def listing_status(listing_id: str) -> dict[str, Any]:
+        row = runtime.store.outbox_by_logical_id(f"listing:{listing_id}")
+        if row is None or row["kind"] != "ItemListing":
+            raise HTTPException(404, "no such listing")
+        return {
+            "listingId": listing_id,
+            "published": row["published_at"] is not None,
+            "entityKey": row["entity_key"],
+            "txHash": row["tx_hash"],
+            "attempts": row["attempts"],
+            "error": row["last_error"],
+        }
 
     # ------------------------------------------------------------ worker
 

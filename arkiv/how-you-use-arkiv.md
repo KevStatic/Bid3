@@ -19,7 +19,7 @@ Every read of publisher-written data is pinned with `.ownedBy(publisher)`, so lo
 | Arkiv feature | What the user sees |
 |---|---|
 | **Indexed attributes + `where` / `orderBy`** | Catalogue filters (category, status, price range) and sorting by closing time, answered by Arkiv. The Lots, Bid history and Results pages show the exact query they ran, with a copy button. |
-| **Entities owned by the seller's wallet** | The seller signs the listing in their own wallet. The page links the new entity and says "owned by your wallet". |
+| **Entities owned by the seller's wallet** | The seller signs the listing in their own wallet (free, on any network). Bid3 pays for the Arkiv write and then transfers ownership to the seller, so the seller needs no tGLM. The page links the new entity and says "owned by your wallet". |
 | **`ownedBy` on reads** | The results page says "Published by Bid3" or flags "Unverified issuer" (the sample data includes an impostor result to show this). The live lot's title can't be replaced by someone else's listing. |
 | **`readonly` flag** | The results page's "Rules match", "Every bid on the ladder" and "Transcript matches" checks mean something, because the rules and bids they check can't have been edited. |
 | **Expiry** | When the live stream drops, the room shows the last public snapshot on Arkiv (price and leading paddle). Snapshots older than 10 minutes are simply gone, so it never shows a stale round. Listings drop out of the catalogue a day after closing. |
@@ -39,4 +39,4 @@ Every read of publisher-written data is pinned with `.ownedBy(publisher)`, so lo
 
 Writes come from two places:
 - **The publisher wallet**, through the [worker](../arkiv-worker/src/writer.ts): rules, bids, snapshots and results.
-- **The seller's own wallet**, from the [seller flow](../web/src/lib/arkiv/write-listing.ts): listings.
+- **The seller's own wallet**, from the [seller flow](../web/src/lib/arkiv/write-listing.ts): listings. The seller signs; the publisher creates the entity and transfers it to them (`arkiv-worker/src/writer.ts`).

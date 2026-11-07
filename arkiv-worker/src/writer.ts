@@ -1,11 +1,11 @@
 import { createPublicClient, createWalletClient, ExpirationTime } from "@arkiv-network/sdk";
 import { rabdi } from "@arkiv-network/sdk/chains";
 import { eq } from "@arkiv-network/sdk/query";
-import { str, u64 } from "@arkiv-network/sdk/schema";
+import { addr, str, u64 } from "@arkiv-network/sdk/schema";
 import { http, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { config } from "./config.ts";
-import { AuctionBid, AuctionDefinition, AuctionResult, AuctionSettlement, AuctionSnapshot } from "./schemas.ts";
+import { AuctionBid, AuctionDefinition, AuctionResult, AuctionSettlement, AuctionSnapshot, ItemListing } from "./schemas.ts";
 
 /**
  * Turns engine outbox records into Arkiv entities.
@@ -16,12 +16,13 @@ import { AuctionBid, AuctionDefinition, AuctionResult, AuctionSettlement, Auctio
  *   AuctionSnapshot    10 minutes                 room fallback; stale ones vanish
  *   AuctionResult      readonly, 90 days, anyone may extend   the record people check
  *   AuctionSettlement  readonly, 90 days, anyone may extend   the Sepolia payment for a sold lot
+ *   ItemListing        closesAt + 24 h, then owned by the seller  a seller's signed listing (they never touch Rabdi)
  */
 
 export interface OutboxItem {
   id: number;
   auctionId: string;
-  kind: "AuctionDefinition" | "AuctionBid" | "AuctionSnapshot" | "AuctionResult" | "AuctionSettlement";
+  kind: "AuctionDefinition" | "AuctionBid" | "AuctionSnapshot" | "AuctionResult" | "AuctionSettlement" | "ItemListing";
   logicalId: string;
   attempts: number;
   payload: Record<string, unknown>;
@@ -90,6 +91,12 @@ export function createWriter() {
           .limit(1)
           .fetch();
         return page.entities[0]?.$key ?? null;
+      }
+      case "ItemListing": {
+        // Created by us, but possibly already handed to the seller: match on the creator, not the owner.
+        const page = await reader.select().from(ItemListing).where(eq("listingId", str(text(p.listingId)))).limit(10).fetch();
+        const mine = page.entities.find((e) => String(e.$creator).toLowerCase() === owner.toLowerCase());
+        return mine?.$key ?? null;
       }
       case "AuctionSnapshot":
         return null; // superseded every few seconds; a duplicate is harmless
@@ -163,6 +170,25 @@ export function createWriter() {
           },
           { expiration: ExpirationTime.fromDays(90), flags: { readonly: true, permissionlessExtension: true } },
         );
+      case "ItemListing":
+        return wallet.createEntity(
+          ItemListing,
+          {
+            listingId: text(p.listingId),
+            lotNumber: num(p.lotNumber),
+            category: text(p.category),
+            status: text(p.status ?? "UPCOMING"),
+            startPriceMinor: num(p.startPriceMinor),
+            closesAtMs: num(p.closesAtMs),
+            auctionId: text(p.auctionId),
+            sellerAlias: text(p.sellerAlias),
+            sellerAddress: addr(text(p.sellerAddress) as Hex),
+            title: text(p.title),
+            description: text(p.description),
+            condition: text(p.condition),
+          },
+          { expiration: ExpirationTime.atDate(new Date(Number(p.closesAtMs) + 24 * 60 * 60 * 1000)) },
+        );
       case "AuctionSettlement":
         return wallet.createEntity(
           AuctionSettlement,
@@ -184,15 +210,27 @@ export function createWriter() {
     }
   }
 
+  /** Makes the seller the listing's owner, so it's theirs on Arkiv even though we paid for the write. */
+  async function handOver(entityKey: Hex, seller: Hex) {
+    const entity = await reader.getEntity(entityKey);
+    if (String(entity.$owner).toLowerCase() === seller.toLowerCase()) return;
+    await wallet.changeOwnership({ entityKey, newOwner: seller });
+  }
+
   return {
     owner,
     async write(item: OutboxItem): Promise<Written> {
+      let written: Written | null = null;
       if (item.attempts > 0) {
         const key = await existing(item);
-        if (key) return { entityKey: key, txHash: null, reused: true };
+        if (key) written = { entityKey: key, txHash: null, reused: true };
       }
-      const { entityKey, txHash } = await create(item);
-      return { entityKey, txHash, reused: false };
+      if (!written) {
+        const { entityKey, txHash } = await create(item);
+        written = { entityKey, txHash, reused: false };
+      }
+      if (item.kind === "ItemListing") await handOver(written.entityKey as Hex, text(item.payload.sellerAddress) as Hex);
+      return written;
     },
   };
 }

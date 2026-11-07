@@ -42,7 +42,7 @@ The live room needs the event laptop's engine and Cloudflare tunnel to be online
 
 ## How a round works
 
-1. Sellers list items from their own wallets ("Sell an item"), and every lot appears in **Lots** for everyone. The **auctioneer** opens bidding on one lot at a time from the admin page.
+1. Sellers list items from their own wallets ("Sell an item"): they sign the listing for free on any network (Sepolia included, no Rabdi or tGLM needed), Bid3 writes it to Arkiv and hands ownership to the seller's wallet, and every lot appears in **Lots** for everyone. The **auctioneer** opens bidding on one lot at a time from the admin page.
 2. Each bidder holds an ESP32 paddle with a **slide switch** and a **BID button**. Switch on to join the room, at any point while bidding is open; switch off to leave. **Each press bids the next price**: +5% per bid, computed with exact integer maths from the opening bid. A lone bidder wins at their bid. If nobody bids before the auctioneer's no-bid timer runs out, the lot closes unsold and goes back to its seller.
 3. Every accepted bid restarts a short hammer countdown ("going once, going twice, sold"). When it ends, the leading paddle wins. Accepted bids stay binding, even if that paddle switches off or loses signal.
 4. If **one paddle** loses signal, only that bidder is blocked (its display shows LOST). Everyone else, and the countdown, carry on. To come back, the paddle re-authenticates and joins again, without restarting the countdown. If the **gateway, bridge or engine** drops out, the whole room **pauses** and nothing is sold until it recovers.

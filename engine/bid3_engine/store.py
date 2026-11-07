@@ -296,3 +296,10 @@ class Store:
             else:
                 rows = self._db.execute("SELECT * FROM payments WHERE status=? ORDER BY created_at DESC LIMIT ?", (status, limit)).fetchall()
         return [dict(r) for r in rows]
+
+    def outbox_by_logical_id(self, logical_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._db.execute(
+                "SELECT id, kind, published_at, entity_key, tx_hash, attempts, last_error FROM outbox WHERE logical_id=?", (logical_id,)
+            ).fetchone()
+        return None if row is None else dict(row)

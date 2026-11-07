@@ -7,6 +7,16 @@ import { Button } from "./ui";
 
 const subscribeNoop = () => () => {};
 
+/** Wallet connection errors in words a person can act on. */
+function connectError(message: string): string {
+  if (message.includes("Provider not found")) return "No browser wallet found. Install one, then try again.";
+  if (/already pending/i.test(message)) {
+    return "Your wallet is already asking to connect. Open the MetaMask extension (the fox icon in the toolbar), unlock it and approve or reject the request.";
+  }
+  if (/user rejected|user denied/i.test(message)) return "You cancelled in your wallet.";
+  return message;
+}
+
 /** True only after hydration, so wallet state never mismatches the server render. */
 function useHydrated() {
   return useSyncExternalStore(subscribeNoop, () => true, () => false);
@@ -56,7 +66,7 @@ export function WalletButton({ size = "sm" }: { size?: "sm" | "md" }) {
         </Button>
         {error ? (
           <span role="alert" className="mt-1 max-w-56 text-right text-xs text-halt">
-            {error.message.includes("Provider not found") ? "No browser wallet found. Install one, then try again." : error.message}
+            {connectError(error.message)}
           </span>
         ) : null}
       </div>
