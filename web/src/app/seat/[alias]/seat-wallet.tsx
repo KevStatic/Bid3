@@ -52,6 +52,7 @@ export function SeatWallet({ alias }: { alias: string }) {
   const bindings = useBindings();
   const payments = usePayments();
   const hasWallet = useSyncExternalStore(noSubscribe, hasBrowserWallet, () => false);
+  const host = useSyncExternalStore(noSubscribe, () => window.location.host, () => "");
   const account = useQuery({ queryKey: ["wallet", "account"], enabled: hasWallet, queryFn: connectedAccount });
   useEffect(() => onAccountsChanged(() => void queryClient.invalidateQueries({ queryKey: ["wallet"] })), [queryClient]);
 
@@ -130,6 +131,15 @@ export function SeatWallet({ alias }: { alias: string }) {
             Your address comes from your wallet app, so linking and paying happen in MetaMask&apos;s browser. No MetaMask? Install it, then tap the sticker
             again.
           </p>
+          {host ? (
+            <p className="mt-2 text-sm text-ink-3">
+              If MetaMask opens without this page: tap its Browser and go to{" "}
+              <span className="tabular font-semibold text-ink-2">
+                {host}/seat/{alias}
+              </span>
+              .
+            </p>
+          ) : null}
         </>
       ) : null}
 

@@ -174,6 +174,15 @@ With no env, the web app runs a labelled in-browser simulation and bundled sampl
 
 ## Changelog
 
+### 2026-11-07 ~11:10 IST: "Open in MetaMask" landed on MetaMask's "This page doesn't exist"
+- **Seen (Kev, phone, new Vercel seat page):** tapping Open in MetaMask opened the MetaMask app on "This page doesn't exist. Update to the latest version of MetaMask…". Also asked about an address that "isn't mine".
+- **Cause:** `https://metamask.app.link/dapp/…` only works if the phone hands it straight to the app. Our JS navigation reached Branch's server, which answers Android with `intent://open?link_click_id=…` (iPhone: the App Store). MetaMask Mobile (8.21, source read) routes on the URL it receives and uses Branch only for analytics, so it saw the action `open`. That isn't in `SUPPORTED_ACTIONS`, hence the INVALID modal.
+- **Fix (`web/src/lib/payments.ts` `openInMetaMaskUrl`):** the link now carries the page itself. Android gets `intent://dapp/<host><path>#Intent;scheme=metamask;package=io.metamask;S.browser_fallback_url=<Play Store>;end`; other phones get `metamask://dapp/<host><path>`. MetaMask turns `metamask://X` into `https://link.metamask.io/X`; `dapp` is supported and whitelisted, so it opens `https://<host><path>` in its browser.
+- **Seat page (`seat-wallet.tsx`):** under the button, a by-hand fallback ("tap its Browser and go to <host>/seat/<alias>").
+- **The address:** the room's "…to the seller 0xcf11…e32d" is the **payee**, Bid3's publisher wallet, which listed demo Lots 21–40. Nothing was linked (`/bindings` was `{}`).
+- **Tested:** `tsc` and `eslint` clean; Vercel-mode `next build` in a scratch copy. In headless Chrome (Android and iPhone UAs, live engine read-only), the seat page shows the fallback line with no page exceptions. Tapping the button navigates to exactly the intent URL (Android) and `metamask://dapp/…` (iPhone). Checked against MetaMask's source: `parseDeeplink` rewrite, `PREFIXES.dapp = https://`, Android manifest registers `metamask` for `io.metamask`.
+- **Not tested:** on a real phone with MetaMask (needs Kev's push to Vercel).
+
 ### 2026-11-07 ~10:50 IST: "operator token required" on every NFC link = Vercel still on the old build
 - **Seen (Kev):** every MetaMask/NFC link attempt shows "operator token required".
 - **Cause:** nothing pushed yet (`origin/main` = `19fe3ca`), so `bid3.vercel.app` still serves the old seat page ("Link this phone to Paddle", throwaway wallet) built with the **old** `ADMIN_TOKEN`. The engine, restarted 10:42 with the new token, refuses its `POST /bindings` (401). Engine, worker and bridge are healthy; `/bindings` is empty.

@@ -67,9 +67,21 @@ export const hasBrowserWallet = () => provider() !== null;
 
 /**
  * Opens this page inside MetaMask's own browser on a phone, where the wallet is available (browser only).
- * MetaMask opens the link over https, so this works for the site's public address, not for localhost.
+ * The link hands MetaMask the page itself (metamask://dapp/<host><path>), which MetaMask Mobile routes to
+ * its browser. The https link (metamask.app.link/dapp/…) only works when the phone passes it straight to
+ * the app: when it reaches Branch's server instead, the app gets a bare "open" link and shows "This page
+ * doesn't exist" (seen on Android, Sat 7 Nov). On Android an intent link names the app and falls back to
+ * the Play Store without MetaMask. MetaMask opens the page over https, so this works for the site's
+ * public address, not for localhost.
  */
-export const openInMetaMaskUrl = (path: string) => `https://metamask.app.link/dapp/${window.location.host}${path}`;
+export function openInMetaMaskUrl(path: string): string {
+  const target = `dapp/${window.location.host}${path}`;
+  if (/android/i.test(navigator.userAgent)) {
+    const store = encodeURIComponent("https://play.google.com/store/apps/details?id=io.metamask");
+    return `intent://${target}#Intent;scheme=metamask;package=io.metamask;S.browser_fallback_url=${store};end`;
+  }
+  return `metamask://${target}`;
+}
 
 /** The account this site can already see in the wallet, without a prompt (null until the user connects). */
 export async function connectedAccount(): Promise<Hex | null> {
