@@ -174,6 +174,18 @@ With no env, the web app runs a labelled in-browser simulation and bundled sampl
 
 ## Changelog
 
+### 2026-11-07 ~11:30 IST: "must provide an Ethereum address" when linking in MetaMask Mobile
+- **Seen (Kev, MetaMask's browser on the phone, after the deep-link fix):** Link my wallet: network 11155111, account shared `0x5e33…31ca`, then `personal_sign` failed with `-32602 Invalid parameters: must provide an Ethereum address.`
+- **Cause (MetaMask Mobile source, `RPCMethodMiddleware.checkActiveAccountAndChainId`):** signing and `eth_sendTransaction` are checked against the accounts this site may use **on the network it's on** (CAIP-25 scope). That exact wording (not "…a permitted…") means the site has **no** account on Sepolia, while `eth_requestAccounts` (no scope filter) still returns one. MetaMask's connect sheet can leave test networks out. The 06:05 Pay-now failure was the same check.
+- **Fix (`web/src/lib/payments.ts`):** on that exact refusal, `shareOnSepolia` calls `wallet_requestPermissions` with `eth_accounts` + `endowment:permitted-chains` [`0xaa36a7`]. MetaMask's `getCaip25PermissionFromLegacyPermissions` (chain-agnostic-permission 2.1.0, read) turns that into a Sepolia scope, so one approval sheet. Then it switches to Sepolia, re-reads the account and tries **once** more. The same applies to linking (`personal_sign`) and paying (`eth_sendTransaction`; still refuses if the account isn't the linked payer). The error text now says to tick Sepolia in the site's permissions.
+- **Tested:**
+  - `tsc` and `eslint` clean; Vercel-mode `next build` in a scratch copy.
+  - In headless Chrome against a **separate test engine** (:8097, scratch DB), with a stand-in MetaMask that shares the account but refuses signing/sending with that error until Sepolia is permitted, and signs with a real key:
+    - Link: refused, permission asked, signed, `/api/bind` 200; the test engine saved exactly that address.
+    - A test round where M4 won: Pay was refused, permission asked, then sent from the linked wallet to the seller with the memo. The site then polled Sepolia (pending, as the hash was fake). No page exceptions.
+  - The live engine's bindings stayed `{}`.
+- **Not tested:** real MetaMask Mobile (needs the push). Kev's phone wallet `0x5e33…31ca` has 0.1 Sepolia ETH, enough gas.
+
 ### 2026-11-07 ~11:10 IST: "Open in MetaMask" landed on MetaMask's "This page doesn't exist"
 - **Seen (Kev, phone, new Vercel seat page):** tapping Open in MetaMask opened the MetaMask app on "This page doesn't exist. Update to the latest version of MetaMask…". Also asked about an address that "isn't mine".
 - **Cause:** `https://metamask.app.link/dapp/…` only works if the phone hands it straight to the app. Our JS navigation reached Branch's server, which answers Android with `intent://open?link_click_id=…` (iPhone: the App Store). MetaMask Mobile (8.21, source read) routes on the URL it receives and uses Branch only for analytics, so it saw the action `open`. That isn't in `SUPPORTED_ACTIONS`, hence the INVALID modal.

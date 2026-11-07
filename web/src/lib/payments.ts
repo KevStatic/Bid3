@@ -129,15 +129,42 @@ function friendly(error: unknown): Error {
   const code = (error as { code?: number })?.code;
   note(`failed: ${code ?? "no code"} ${text}`);
   if (code === 4001 || /user (rejected|denied)|rejected the request/i.test(text)) return new Error("You cancelled in your wallet.");
-  if (/must provide an ethereum address|unauthorized/i.test(text)) {
+  if (/must provide (an|a permitted) ethereum address|unauthorized/i.test(text)) {
     return new Error(
-      `MetaMask hasn't shared this wallet with the site on Sepolia. Try again and approve the connection. If it repeats, open MetaMask's connected sites, disconnect ${typeof window === "undefined" ? "this site" : window.location.host}, reload this page and try again.`,
+      `MetaMask hasn't let this site use your wallet on Sepolia. Try again and approve with Sepolia ticked. If it repeats: in MetaMask, open ${typeof window === "undefined" ? "this site" : window.location.host}'s permissions, turn on Sepolia under networks, and try again.`,
     );
   }
   if (/insufficient funds|exceeds balance/i.test(text)) {
     return new Error("Your wallet needs a little Sepolia ETH for gas. Get some free from the Sepolia faucet, then pay again.");
   }
   return error instanceof Error ? error : new Error(text);
+}
+
+/**
+ * MetaMask Mobile checks signing and sending against the accounts this site may use on the network it's
+ * on, and refuses with -32602 "must provide an Ethereum address" when there are none. Its connect sheet
+ * can leave test networks such as Sepolia out, while eth_requestAccounts still returns the account
+ * (seen Sat 7 Nov ~11:16: shared, then refused at the signature).
+ */
+const notSharedOnThisNetwork = (error: unknown) =>
+  (error as { code?: number })?.code === -32602 &&
+  /must provide (an|a permitted) ethereum address/i.test(`${(error as { message?: string })?.message ?? ""}`);
+
+/**
+ * Asks MetaMask to let this site use an account on Sepolia: one approval in its connect sheet, with
+ * Sepolia ticked. Nothing is signed or sent. Returns the account it then shares on Sepolia.
+ */
+async function shareOnSepolia(p: EIP1193Provider): Promise<Hex> {
+  note("MetaMask hasn't let this site use the wallet on Sepolia; asking for it");
+  const permissions = {
+    eth_accounts: {},
+    "endowment:permitted-chains": { caveats: [{ type: "restrictNetworkSwitching", value: [SEPOLIA.hexId] }] },
+  };
+  await p.request({ method: "wallet_requestPermissions", params: [permissions] } as unknown as Parameters<EIP1193Provider["request"]>[0]);
+  await switchToSepolia(p);
+  const account = await requestAccount();
+  note(`account shared on Sepolia: ${account}`);
+  return account;
 }
 
 /**
@@ -154,11 +181,25 @@ export async function linkMyWallet(alias: string): Promise<Hex> {
     // per network) signs with an account it has shared on the network the paddle pays on.
     await switchToSepolia(p);
     note(`wallet network: ${Number.parseInt((await p.request({ method: "eth_chainId" })) as string, 16)}`);
-    const wallet = (await requestAccount()).toLowerCase() as Hex;
+    let wallet = (await requestAccount()).toLowerCase() as Hex;
     note(`account shared: ${wallet}`);
-    const issuedAtMs = Date.now();
+    const sign = async (account: Hex) => {
+      const issuedAtMs = Date.now();
+      const signature = await p.request({ method: "personal_sign", params: [stringToHex(bindMessage(alias, account, issuedAtMs)), account] });
+      return { issuedAtMs, signature };
+    };
     note("asking the wallet to sign the link message");
-    const signature = await p.request({ method: "personal_sign", params: [stringToHex(bindMessage(alias, wallet, issuedAtMs)), wallet] });
+    let signed: Awaited<ReturnType<typeof sign>>;
+    try {
+      signed = await sign(wallet);
+    } catch (error) {
+      if (!notSharedOnThisNetwork(error)) throw error;
+      note(`refused: ${(error as { message?: string }).message ?? error}`);
+      wallet = (await shareOnSepolia(p)).toLowerCase() as Hex;
+      note("asking the wallet to sign the link message again");
+      signed = await sign(wallet);
+    }
+    const { issuedAtMs, signature } = signed;
     note("signed; saving the address");
     const response = await fetch("/api/bind", {
       method: "POST",
@@ -219,11 +260,26 @@ export async function sendPayment(payment: Payment): Promise<Hex> {
     if (balance <= BigInt(payment.amountWei)) {
       throw new Error(`This wallet has no Sepolia ETH for gas. Send a little Sepolia ETH to ${account}, then pay again.`);
     }
+    const payee = payment.payee as Hex;
+    const send = async (from: Hex) =>
+      (await p.request({
+        method: "eth_sendTransaction",
+        params: [{ from, to: payee, value: numberToHex(BigInt(payment.amountWei)), data: stringToHex(payment.memo) }],
+      })) as Hex;
     note("asking the wallet to send");
-    const hash = (await p.request({
-      method: "eth_sendTransaction",
-      params: [{ from: account, to: payment.payee as Hex, value: numberToHex(BigInt(payment.amountWei)), data: stringToHex(payment.memo) }],
-    })) as Hex;
+    let hash: Hex;
+    try {
+      hash = await send(account);
+    } catch (error) {
+      if (!notSharedOnThisNetwork(error)) throw error;
+      note(`refused: ${(error as { message?: string }).message ?? error}`);
+      const again = await shareOnSepolia(p);
+      if (again.toLowerCase() !== payment.payer.toLowerCase()) {
+        throw new Error(`Switch your wallet to ${shortAddress(payment.payer)}, the one linked to Paddle ${payment.winnerAlias}.`);
+      }
+      note("asking the wallet to send again");
+      hash = await send(again);
+    }
     note(`sent ${hash}`);
     return hash;
   } catch (error) {
