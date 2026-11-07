@@ -1,0 +1,14 @@
+# Build context is the repo root (docker build -f backend/Dockerfile .). BuildKit reads this file
+# instead of a root .dockerignore. Keep secrets, local databases and heavy folders out of the context.
+**/.env
+**/.env.*
+!**/.env.example
+**/.venv
+**/node_modules
+**/__pycache__
+**/.pytest_cache
+**/.next
+engine/data
+web
+firmware
+.git

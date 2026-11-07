@@ -1,0 +1,31 @@
+# Render Blueprint for the Bid3 standalone backend.
+# In Render: New > Blueprint, pick this repo, and set the Blueprint path to backend/render.yaml.
+# (Or create a Web Service by hand with the same settings; see backend/README.md.)
+services:
+  - type: web
+    name: bid3-backend
+    runtime: docker
+    plan: free
+    region: singapore
+    # Built from the repo root so the image uses the real engine/ and arkiv-worker/ code.
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    envVars:
+      # Fresh secrets for this backend. Don't reuse the laptop's values.
+      - key: BRIDGE_TOKEN
+        generateValue: true
+      - key: ADMIN_TOKEN
+        generateValue: true
+      - key: WORKER_TOKEN
+        generateValue: true
+      - key: CORS_ORIGINS
+        value: https://bid3.vercel.app,http://localhost:3000
+      - key: REQUIRE_TOKENS
+        value: "1"
+      - key: SEED_DEMO
+        value: "1"
+      - key: SEED_COUNTDOWN_MS
+        value: "10000"
+      # Optional, add in the Environment tab: ARKIV_PRIVATE_KEY (a NEW wallet, never the laptop's
+      # publisher) and ARKIV_ACCESS_KEY turn on the Arkiv worker. Set SEED_DEMO=0 when you do.
